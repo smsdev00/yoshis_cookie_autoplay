@@ -12,29 +12,38 @@ EMULATOR_WINDOW_TITLE = "Snes9x 1.60" # Ejemplo, podría ser "ZSNES", "RetroArch
 # ¡ESTO ES LO MÁS IMPORTANTE! Necesitarás encontrar estos valores manualmente.
 GAME_BOARD_REGION = (690, 348, 1269, 919) # (x_inicial, y_inicial, ancho, alto) -> ¡REEMPLAZAR!
 
-templates = {
+MIN_DISTANCE = 80
+
+TOLERANCE = 3
+
+TEMPLATES = {
             'heart' : cv2.imread('./imgs/hearth.png'),
             'yellow' : cv2.imread('./imgs/yellow.png'),
             'green' : cv2.imread('./imgs/green.png'),
         }
 
+# Validar que las imágenes se cargaron correctamente
+for name, img in TEMPLATES.items():
+    if img is None:
+        raise FileNotFoundError(f"No se pudo cargar la imagen de la plantilla: ./imgs/{name}.png")
+    
 # NUEVA FUNCION DE CONVERSION DE IMAGEN DE TABLERO A ARRAY
-def screenshot_to_board(tablero_region, templates, min_distance=20, tolerance=3):
+def screenshot_to_board():
     """
     Convierte una captura de pantalla del tablero en un array NxN dinámico, excluyendo filas no contiguas.
     Args:
-        tablero_region: Tupla (x, y, width, height) con la región aproximada.
+        GAME_BOARD_REGION: Tupla (x, y, width, height) con la región aproximada.
         templates: Dicc {tipo: img_template}.
-        min_distance: Distancia mínima en píxeles entre cookies contiguas.
+        MIN_DISTANCE : Distancia mínima en píxeles entre cookies contiguas.
         tolerance: Máximo de cookies missing para considerar válido el grid.
     Returns:
         Lista NxN con tipos de cookies del bloque principal, o None si falla.
     """
-    cookie_types = list(templates.keys())
+    cookie_types = list(TEMPLATES.keys())
 
     # Tomar captura
     try:
-        #screenshot = pyautogui.screenshot(region=tablero_region)
+        #screenshot = pyautogui.screenshot(region=GAME_BOARD_REGION)
         screenshot = cv2.imread('imgs/static_image.jpg')  # Ej. 'test_board.png'
         screenshot = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
     except Exception as e:
@@ -46,7 +55,7 @@ def screenshot_to_board(tablero_region, templates, min_distance=20, tolerance=3)
     detected_types = []
 
     # Detectar múltiples matches para cada template
-    for cookie_type, template in templates.items():
+    for cookie_type, template in TEMPLATES.items():
         res = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
         threshold = 0.8
         loc = np.where(res >= threshold)
@@ -54,7 +63,7 @@ def screenshot_to_board(tablero_region, templates, min_distance=20, tolerance=3)
             center_x = pt[0] + template.shape[1] // 2
             center_y = pt[1] + template.shape[0] // 2
             # Evitar duplicados
-            if all(np.sqrt((center_x - px)**2 + (center_y - py)**2) > min_distance / 2 for px, py in positions):
+            if all(np.sqrt((center_x - px)**2 + (center_y - py)**2) > MIN_DISTANCE / 2 for px, py in positions):
                 positions.append([center_x, center_y])
                 detected_types.append(cookie_type)
 
@@ -68,7 +77,7 @@ def screenshot_to_board(tablero_region, templates, min_distance=20, tolerance=3)
     # Calcular matriz de distancias (sin SciPy)
     diff = positions[:, np.newaxis] - positions[np.newaxis, :]
     dists = np.sqrt(np.sum(diff ** 2, axis=-1))
-    adj_matrix = dists < min_distance * 1.5
+    adj_matrix = dists < MIN_DISTANCE * 1.5
 
     # Connected components con DFS
     visited = np.zeros(len(positions), dtype=bool)
@@ -95,7 +104,7 @@ def screenshot_to_board(tablero_region, templates, min_distance=20, tolerance=3)
 
     # Calcular N dinámicamente
     N = int(np.round(np.sqrt(main_size)))
-    if abs(main_size - N**2) > tolerance:
+    if abs(main_size - N**2) > TOLERANCE:
         print(f"Tamaño no cuadrado válido: {main_size} cookies, esperado cerca de {N**2}.")
         return None
 
@@ -134,89 +143,6 @@ def capture_game_board(region):
     except Exception as e:
         print(f"Error al capturar la pantalla: {e}")
         return None
-
-def analyze_board(board_image):
-    """
-    Analiza la imagen del tablero y la convierte en un array 2D
-    utilizando template matching.
-    """
-    print("Analizando tablero...")
-
-    # --- 1. Cargar plantillas y definir IDs ---
-    # Asegúrate de que los nombres de archivo coincidan con los que guardaste.
-    try:
-        templates = {
-            1: cv2.imread('./imgs/hearth.png', cv2.IMREAD_UNCHANGED),
-            2: cv2.imread('./imgs/green.png', cv2.IMREAD_UNCHANGED),
-            3: cv2.imread('./imgs/yellow.png', cv2.IMREAD_UNCHANGED),
-        }
-    except Exception as e:
-        print(f"Error al cargar las imágenes de las plantillas: {e}")
-        print("Asegúrate de haber creado y guardado los archivos .png de las cookies.")
-        return []
-
-    # Verificar si alguna plantilla no se cargó
-    if any(t is None for t in templates.values()):
-        print("Error: Una o más plantillas no se pudieron cargar. Revisa los nombres de archivo.")
-        return []
-
-
-    # --- 2. Definir la estructura del tablero ---
-    # Yoshi's Cookie para SNES tiene un tablero de 5x5 visible.
-    NUM_ROWS = 5
-    NUM_COLS = 5
-    
-    # Obtener las dimensiones de la imagen del tablero capturada
-    board_height, board_width, _ = board_image.shape
-    
-    # Calcular el tamaño de cada celda
-    cell_height = board_height // NUM_ROWS
-    cell_width = board_width // NUM_COLS
-
-    board_array = []
-    match_threshold = 0.8 # Umbral de confianza para la coincidencia (ajustar si es necesario)
-
-    # --- 3. Iterar sobre cada celda del tablero ---
-    for r in range(NUM_ROWS):
-        row_array = []
-        for c in range(NUM_COLS):
-            # Coordenadas de la celda actual
-            y1 = r * cell_height
-            y2 = (r + 1) * cell_height
-            x1 = c * cell_width
-            x2 = (c + 1) * cell_width
-
-            # Recortar la celda de la imagen del tablero
-            cell_image = board_image[y1:y2, x1:x2]
-
-            best_match_cookie_id = 0 # 0 para "desconocido" o "vacío"
-            best_match_score = match_threshold
-
-            # --- 4. Comparar la celda con cada plantilla ---
-            for cookie_id, template_img in templates.items():
-                # Redimensionar la plantilla para que coincida con el tamaño de la celda
-                # Esto hace que el matching sea más robusto si hay pequeñas variaciones de tamaño
-                resized_template = cv2.resize(template_img, (cell_width, cell_height))
-                
-                # Realizar el template matching
-                result = cv2.matchTemplate(cell_image, resized_template, cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(result)
-
-                if max_val > best_match_score:
-                    best_match_score = max_val
-                    best_match_cookie_id = cookie_id
-            
-            row_array.append(best_match_cookie_id)
-        
-        board_array.append(row_array)
-
-    # Imprimir el tablero resultante para depuración
-    print("Tablero detectado:")
-    for row in board_array:
-        print(row)
-
-    return board_array
-    return board_array
 
 def decide_next_move(board_array):
     """
@@ -284,7 +210,9 @@ def main():
     El bucle principal que orquesta todo el bot.
     """
     print("Iniciando bot para Yoshi's Cookie...")
-    
+
+    print("Iniciando screenshot_to_board()")
+    screenshot_to_board()
     
 
 if __name__ == "__main__":
