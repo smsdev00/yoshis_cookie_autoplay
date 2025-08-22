@@ -5,4 +5,5 @@ CONF = {
         "Amarillo": {"min": [6, 193, 226], "max": [33, 255, 255]},
     },
     "game_area": {"x_min": 690, "x_max": 1275, "y_min": 340, "y_max": 940},
+    "images_path" : "./imgs/"
 }
