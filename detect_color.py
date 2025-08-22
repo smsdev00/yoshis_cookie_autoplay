@@ -2,10 +2,12 @@ import cv2
 import numpy as np
 
 # Ruta de la imagen, asegúrate de que esté en la misma carpeta que el script
-IMAGE_PATH = './imgs/static_image.jpg'
+IMAGE_PATH = "./imgs/static_image.jpg"
+
 
 def nothing(x):
     pass
+
 
 def hsv_color_selector():
     # Cargar la imagen
@@ -48,7 +50,7 @@ def hsv_color_selector():
         # Mostrar la imagen original y la máscara
         cv2.imshow("Original Image", image)
         cv2.imshow("Mask", mask)
-        
+
         # Esperar la pulsación de una tecla para salir
         k = cv2.waitKey(1) & 0xFF
         if k == 27:  # Presiona la tecla 'Esc' para salir
@@ -60,9 +62,10 @@ def hsv_color_selector():
     print(f"  lower_range = np.array([{h_min}, {s_min}, {v_min}])")
     print(f"  upper_range = np.array([{h_max}, {s_max}, {v_max}])")
     print("---------------------------------------")
-    
+
     # Destruir todas las ventanas
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     hsv_color_selector()
