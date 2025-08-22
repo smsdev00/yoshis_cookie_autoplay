@@ -20,6 +20,11 @@ def visualizar_deteccion_cookies(
     Returns:
         np.ndarray: La imagen con las visualizaciones.
     """
+    cookies = {
+        "Verde":{"cant":0,"coords":[]},
+        "Amarillo":{"cant":0,"coords":[]},
+        "Rojo":{"cant":0,"coords":[]}
+    }
     # Cargar la imagen
     imagen = cv2.imread(imagen_path)
     if imagen is None:
@@ -60,13 +65,27 @@ def visualizar_deteccion_cookies(
         # Iterar sobre cada contorno para encontrar el centro
         for contorno in contornos:
             area = cv2.contourArea(contorno)
-            if area > 300:  # Filtrar por área para evitar ruido
+            if(nombre_color == 'Verde'):
+               
+                # --- NUEVOS FILTROS DE FORMA ---
+                # Filtro 1: por circularidad (para la forma redonda de las galletas)
+                perimetro = cv2.arcLength(contorno, True)
+                if perimetro > 0:
+                    circularidad = 4 * np.pi * area / (perimetro * perimetro)
+                    if circularidad < 0.6: # Valor ajustado, puedes subirlo a 0.7 o 0.8
+                        continue
+
+                # Filtro 2: por relación de aspecto (relación ancho/alto)
+                x, y, w, h = cv2.boundingRect(contorno)
+                aspect_ratio = float(w) / h
+                if aspect_ratio < 0.5 or aspect_ratio > 2.0: # Valores amplios para formas casi cuadradas/circulares
+                    continue
+            if area > 600:  # Filtrar por área para evitar ruido
                 momentos = cv2.moments(contorno)
                 if momentos["m00"] != 0:
                     cx = int(momentos["m10"] / momentos["m00"])
                     cy = int(momentos["m01"] / momentos["m00"])
-
-                    # Filtrar por el área de juego
+                     # Filtrar por el área de juego
                     if (area_juego['x_min'] <= cx <= area_juego['x_max'] and
                         area_juego['y_min'] <= cy <= area_juego['y_max']):
                         
@@ -75,6 +94,7 @@ def visualizar_deteccion_cookies(
                         cv2.circle(imagen_con_detecciones, (cx, cy), 5, color_punto, -1)
                         print(f"✅ {nombre_color} cookie detectada en: ({cx}, {cy})")
 
+    print(cookies)
     return imagen_con_detecciones
 
 if __name__ == '__main__':
