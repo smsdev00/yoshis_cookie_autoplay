@@ -44,8 +44,8 @@ def detect_cookies_by_color_improved():
     
     # 🎯 DEFINIR ÁREA DE JUEGO (ajustado a tu imagen)
     game_area = {
-        'x_min': 690, 'x_max': 1275,  # Área horizontal de la cuadrícula ajustada
-        'y_min': 340, 'y_max': 940   # Área vertical de la cuadrícula ajustada
+        'x_min': 345, 'x_max': 525,  # Área horizontal de la cuadrícula ajustada
+        'y_min': 145, 'y_max': 295   # Área vertical de la cuadrícula ajustada
     }
     
     for cnt in contours:
@@ -174,10 +174,9 @@ def test_different_ranges():
     
     # Diferentes rangos para probar
     ranges = [
-        #("Verde estándar", [40, 50, 50], [80, 255, 255]),
-        #("Verde amplio", [35, 30, 30], [85, 255, 255]),
-        #("Verde-amarillo", [30, 40, 60], [90, 200, 255]),
-        ("Rojo-corazones",[129,92,137],[179,255,255])
+        ("Verde estándar", [40, 50, 50], [80, 255, 255]),
+        ("Verde amplio", [35, 30, 30], [85, 255, 255]),
+        ("Verde-amarillo", [30, 40, 60], [90, 200, 255]),
     ]
     
     for name, lower, upper in ranges:
