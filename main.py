@@ -492,8 +492,8 @@ class ImprovedCookieDetector:
                 imagen_vis,
                 (x_min, y_min),
                 (x_max, y_max),
-                (255, 0, 0),  # Color Azul (BGR)
-                2             # Grosor de la línea
+                (9, 255, 0),  # Color Azul (BGR)
+                5             # Grosor de la línea
             )
             
             # Mostrar la imagen
@@ -507,8 +507,9 @@ def main():
     print("="*50 + "\n")
     
     detector = ImprovedCookieDetector(CONF)
+    detector.imprimir_zona_juego('imgs/002.png')
     
-    resultado = detector.procesar_imagen('imgs/R02S01.png')
+    resultado = detector.procesar_imagen('imgs/001.png')
     if resultado:
         print("\n[OK] Procesamiento completado exitosamente")
         
