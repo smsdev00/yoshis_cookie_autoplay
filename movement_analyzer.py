@@ -1,569 +1,260 @@
+
 import numpy as np
-from typing import List, Tuple, Dict, Optional
-from dataclasses import dataclass
-from enum import Enum
-import copy
+from collections import namedtuple
 
-
-class MoveType(Enum):
-    HORIZONTAL = "horizontal"
-    VERTICAL = "vertical"
-
-
-@dataclass
-class Move:
-    """Representa un movimiento posible en el tablero."""
-
-    pos1: Tuple[int, int]  # PosiciÃ³n de la primera cookie (fila, columna)
-    pos2: Tuple[int, int]  # PosiciÃ³n de la segunda cookie
-    move_type: MoveType
-    score: float = 0.0
-    matches_created: List[List[Tuple[int, int]]] = None
-    cascade_potential: int = 0
-    strategic_value: float = 0.0
-    explanation: str = ""
-
+Move = namedtuple('Move', ['pos1', 'pos2', 'type', 'score', 'details'])
 
 class CookieMovementAnalyzer:
-    """
-    Analizador de movimientos Ã³ptimos para Cookie Run.
-    Implementa mÃºltiples estrategias de anÃ¡lisis y optimizaciÃ³n.
-    """
-
     def __init__(self):
-        # ConfiguraciÃ³n de scoring
-        self.MATCH_3_SCORE = 100
-        self.MATCH_4_SCORE = 300
-        self.MATCH_5_SCORE = 500
-        self.L_SHAPE_SCORE = 400
-        self.T_SHAPE_SCORE = 400
-        self.CASCADE_MULTIPLIER = 1.5
-        self.STRATEGIC_BONUS = 50
+        self.strategy_weights = {}
+        self.set_strategy("balanced")
 
-        # Mapeo de valores a nombres
-        self.COLOR_NAMES = {0: "VacÃ­o", 1: "Verde", 2: "Rojo", 3: "Amarillo"}
-
-        # ConfiguraciÃ³n de estrategias
-        self.strategy_weights = {
-            "immediate_score": 0.4,  # Importancia del score inmediato
-            "cascade_potential": 0.3,  # Importancia del potencial de cascada
-            "board_setup": 0.2,  # Importancia de setup futuro
-            "risk_mitigation": 0.1,  # Importancia de mitigar riesgos
-        }
-
-    def analyze_optimal_move(
-        self, board: np.ndarray, strategy: str = "balanced"
-    ) -> Dict:
-        """
-        Analiza el tablero y encuentra el movimiento Ã³ptimo.
-
-        Args:
-            board: Array 2D representando el tablero (0=vacÃ­o, 1=verde, 2=rojo, 3=amarillo)
-            strategy: Estrategia a usar ("aggressive", "defensive", "balanced", "cascade_focused")
-
-        Returns:
-            Dict con el mejor movimiento y anÃ¡lisis completo
-        """
-        print(f"\nðŸŽ¯ === ANÃLISIS DE MOVIMIENTO Ã“PTIMO ===")
-        print(f"ðŸ“‹ Estrategia: {strategy}")
-        print(f"ðŸ“ Tablero shape: {board.shape}")
-
-        # Ajustar pesos segÃºn estrategia
-        self._adjust_strategy_weights(strategy)
-
-        # 1. Generar todos los movimientos posibles
-        possible_moves = self._generate_all_moves(board)
-        print(f"ðŸ” Movimientos posibles encontrados: {len(possible_moves)}")
-
-        if not possible_moves:
-            return {
-                "best_move": None,
-                "analysis": "No se encontraron movimientos vÃ¡lidos",
-            }
-
-        # 2. Evaluar cada movimiento
-        evaluated_moves = []
-        for move in possible_moves:
-            score_data = self._evaluate_move(board, move)
-            move.score = score_data["total_score"]
-            move.matches_created = score_data["matches"]
-            move.cascade_potential = score_data["cascade_potential"]
-            move.strategic_value = score_data["strategic_value"]
-            move.explanation = score_data["explanation"]
-            evaluated_moves.append(move)
-
-        # 3. Ordenar por score total
-        evaluated_moves.sort(key=lambda m: m.score, reverse=True)
-
-        # 4. AnÃ¡lisis detallado del mejor movimiento
-        best_move = evaluated_moves[0]
-        analysis = self._create_detailed_analysis(board, best_move, evaluated_moves[:5])
-
-        return {
-            "best_move": best_move,
-            "top_moves": evaluated_moves[:5],
-            "analysis": analysis,
-            "board_state": self._analyze_board_state(board),
-        }
-
-    def _adjust_strategy_weights(self, strategy: str):
-        """Ajusta los pesos segÃºn la estrategia seleccionada."""
+    def set_strategy(self, strategy: str):
+        """Define los pesos para diferentes estrategias de puntuación."""
         if strategy == "aggressive":
             self.strategy_weights = {
-                "immediate_score": 0.6,
+                "immediate_match": 1.0,
+                "setup_3": 0.2,
+                "setup_4": 0.4,
                 "cascade_potential": 0.3,
-                "board_setup": 0.1,
-                "risk_mitigation": 0.0,
             }
         elif strategy == "defensive":
             self.strategy_weights = {
-                "immediate_score": 0.2,
-                "cascade_potential": 0.1,
-                "board_setup": 0.4,
-                "risk_mitigation": 0.3,
+                "immediate_match": 0.6,
+                "setup_3": 0.5,
+                "setup_4": 0.7,
+                "cascade_potential": 0.5,
             }
         elif strategy == "cascade_focused":
             self.strategy_weights = {
-                "immediate_score": 0.2,
-                "cascade_potential": 0.6,
-                "board_setup": 0.2,
-                "risk_mitigation": 0.0,
+                "immediate_match": 0.7,
+                "setup_3": 0.4,
+                "setup_4": 0.6,
+                "cascade_potential": 1.0,
             }
-        # "balanced" mantiene los pesos por defecto
+        else:  # balanced
+            self.strategy_weights = {
+                "immediate_match": 0.8,
+                "setup_3": 0.3,
+                "setup_4": 0.5,
+                "cascade_potential": 0.6,
+            }
 
-    def _generate_all_moves(self, board: np.ndarray) -> List[Move]:
-        """Genera todos los movimientos posibles en el tablero."""
+    def analyze_optimal_move(self, grid: np.ndarray, strategy: str = "balanced"):
+        """
+        Analiza todos los movimientos posibles y devuelve el mejor según la estrategia.
+        """
+        self.set_strategy(strategy)
+        possible_moves = self._find_possible_moves(grid)
+        
+        if not possible_moves:
+            return {"best_move": None, "all_moves": []}
+
+        best_move = max(possible_moves, key=lambda m: m.score)
+        
+        return {
+            "best_move": best_move,
+            "all_moves": sorted(possible_moves, key=lambda m: m.score, reverse=True)
+        }
+
+    def _find_possible_moves(self, grid: np.ndarray):
+        """Encuentra y puntúa todos los movimientos horizontales y verticales."""
         moves = []
-        rows, cols = board.shape
-
-        # Movimientos horizontales
+        rows, cols = grid.shape
+        
+        # Movimientos horizontales (swap de columnas)
         for r in range(rows):
             for c in range(cols - 1):
-                if (
-                    board[r, c] != 0 and board[r, c + 1] != 0
-                ):  # Solo intercambiar cookies no vacÃ­as
-                    move = Move(
-                        pos1=(r, c), pos2=(r, c + 1), move_type=MoveType.HORIZONTAL
-                    )
-                    moves.append(move)
+                if grid[r, c] != grid[r, c+1]: # No tiene sentido swapear iguales
+                    swapped_grid = self._simulate_move(grid, (r, c), (r, c+1), 'horizontal')
+                    score, details = self._evaluate_grid_state(grid, swapped_grid)
+                    moves.append(Move((r, c), (r, c+1), 'horizontal', score, details))
 
-        # Movimientos verticales
-        for r in range(rows - 1):
-            for c in range(cols):
-                if (
-                    board[r, c] != 0 and board[r + 1, c] != 0
-                ):  # Solo intercambiar cookies no vacÃ­as
-                    move = Move(
-                        pos1=(r, c), pos2=(r + 1, c), move_type=MoveType.VERTICAL
-                    )
-                    moves.append(move)
-
+        # Movimientos verticales (swap de filas)
+        for c in range(cols):
+            for r in range(rows - 1):
+                if grid[r, c] != grid[r+1, c]:
+                    swapped_grid = self._simulate_move(grid, (r, c), (r+1, c), 'vertical')
+                    score, details = self._evaluate_grid_state(grid, swapped_grid)
+                    moves.append(Move((r, c), (r+1, c), 'vertical', score, details))
+        
         return moves
 
-    def _evaluate_move(self, board: np.ndarray, move: Move) -> Dict:
-        """EvalÃºa un movimiento especÃ­fico y calcula su score."""
-        # Simular el movimiento
-        test_board = board.copy()
-        test_board[move.pos1], test_board[move.pos2] = (
-            test_board[move.pos2],
-            test_board[move.pos1],
-        )
+    def _simulate_move(self, grid: np.ndarray, pos1, pos2, move_type: str):
+        """Simula un movimiento y la caída de las galletas."""
+        temp_grid = grid.copy()
+        
+        if move_type == 'horizontal':
+            # Swap de columnas completas
+            temp_grid[:, [pos1[1], pos2[1]]] = temp_grid[:, [pos2[1], pos1[1]]]
+        elif move_type == 'vertical':
+            # Swap de filas completas
+            temp_grid[[pos1[0], pos2[0]], :] = temp_grid[[pos2[0], pos1[0]], :]
+            
+        return temp_grid
 
-        # Detectar matches inmediatos
-        matches = self._find_all_matches(test_board)
+    def _evaluate_grid_state(self, original_grid, new_grid):
+        """Calcula el puntaje de un estado del tablero después de un movimiento."""
+        score = 0
+        details = {}
 
-        # Calcular score base
-        immediate_score = self._calculate_match_score(matches)
+        # 1. Puntuación por matches inmediatos
+        matches = self._find_matches(new_grid)
+        immediate_score = len(matches) * 10
+        score += immediate_score * self.strategy_weights.get("immediate_match", 1.0)
+        details["immediate_matches"] = len(matches)
 
-        # Calcular potencial de cascada
-        cascade_potential = self._calculate_cascade_potential(test_board, matches)
+        # 2. Puntuación por "setups" (dejar 3 o 4 galletas casi en línea)
+        setup_score_3, setup_score_4 = self._calculate_setup_score(new_grid)
+        score += setup_score_3 * self.strategy_weights.get("setup_3", 0.3)
+        score += setup_score_4 * self.strategy_weights.get("setup_4", 0.5)
+        details["setups_3"] = setup_score_3
+        details["setups_4"] = setup_score_4
 
-        # Calcular valor estratÃ©gico
-        strategic_value = self._calculate_strategic_value(board, test_board, move)
+        # 3. Puntuación por potencial de cascada (muy simplificado)
+        # Un proxy simple es ver si un match deja otros colores iguales adyacentes
+        cascade_score = self._calculate_cascade_potential(new_grid, matches)
+        score += cascade_score * self.strategy_weights.get("cascade_potential", 0.6)
+        details["cascade_potential"] = cascade_score
+        
+        return score, details
 
-        # Score total ponderado
-        total_score = (
-            immediate_score * self.strategy_weights["immediate_score"]
-            + cascade_potential * self.strategy_weights["cascade_potential"]
-            + strategic_value * self.strategy_weights["board_setup"]
-        )
-
-        # Crear explicaciÃ³n
-        explanation = self._create_move_explanation(
-            board, move, matches, immediate_score, cascade_potential, strategic_value
-        )
-
-        return {
-            "total_score": total_score,
-            "immediate_score": immediate_score,
-            "cascade_potential": cascade_potential,
-            "strategic_value": strategic_value,
-            "matches": matches,
-            "explanation": explanation,
-        }
-
-    def _find_all_matches(self, board: np.ndarray) -> List[List[Tuple[int, int]]]:
-        """Encuentra todos los matches de 3 o mÃ¡s cookies consecutivas."""
+    def _find_matches(self, grid: np.ndarray):
+        """Encuentra todas las filas y columnas completas de un solo color."""
         matches = []
-        rows, cols = board.shape
-
-        # Matches horizontales
+        rows, cols = grid.shape
+        
+        # Check filas
         for r in range(rows):
-            current_match = []
-            current_color = 0
-
-            for c in range(cols):
-                if board[r, c] == current_color and current_color != 0:
-                    current_match.append((r, c))
-                else:
-                    if len(current_match) >= 3:
-                        matches.append(current_match.copy())
-                    current_match = [(r, c)] if board[r, c] != 0 else []
-                    current_color = board[r, c]
-
-            # Verificar el Ãºltimo match de la fila
-            if len(current_match) >= 3:
-                matches.append(current_match)
-
-        # Matches verticales
+            if np.all(grid[r, :] == grid[r, 0]) and grid[r, 0] != 0:
+                matches.append(f"Fila {r} de color {grid[r, 0]}")
+        
+        # Check columnas
         for c in range(cols):
-            current_match = []
-            current_color = 0
-
-            for r in range(rows):
-                if board[r, c] == current_color and current_color != 0:
-                    current_match.append((r, c))
-                else:
-                    if len(current_match) >= 3:
-                        matches.append(current_match.copy())
-                    current_match = [(r, c)] if board[r, c] != 0 else []
-                    current_color = board[r, c]
-
-            # Verificar el Ãºltimo match de la columna
-            if len(current_match) >= 3:
-                matches.append(current_match)
-
-        # Detectar formas especiales (L, T)
-        special_matches = self._find_special_shapes(board)
-        matches.extend(special_matches)
-
+            if np.all(grid[:, c] == grid[0, c]) and grid[0, c] != 0:
+                matches.append(f"Columna {c} de color {grid[0, c]}")
+                
         return matches
 
-    def _find_special_shapes(self, board: np.ndarray) -> List[List[Tuple[int, int]]]:
-        """Detecta formas especiales como L y T."""
-        special_matches = []
-        rows, cols = board.shape
+    def _calculate_setup_score(self, grid):
+        """Puntúa configuraciones que están cerca de formar una línea."""
+        rows, cols = grid.shape
+        score_3 = 0
+        score_4 = 0
+        
+        # Filas
+        for r in range(rows):
+            for c in range(cols - 3):
+                line = grid[r, c:c+4]
+                unique, counts = np.unique(line[line != 0], return_counts=True)
+                if len(unique) == 2 and 3 in counts:
+                    score_3 += 1
+                if len(unique) == 1 and len(line[line != 0]) == 4: # 4 de 5
+                    score_4 +=1
 
-        # Detectar formas L y T con verificaciÃ³n de lÃ­mites adecuada
-        for r in range(1, rows - 1):
-            for c in range(1, cols - 1):
-                color = board[r, c]
-                if color == 0:
-                    continue
+        # Columnas
+        for c in range(cols):
+            for r in range(rows - 3):
+                line = grid[r:r+4, c]
+                unique, counts = np.unique(line[line != 0], return_counts=True)
+                if len(unique) == 2 and 3 in counts:
+                    score_3 += 1
+                if len(unique) == 1 and len(line[line != 0]) == 4:
+                    score_4 +=1
+        
+        # Considerar líneas de 4 en grillas de 5
+        # (simplificado, se puede expandir)
+        
+        return score_3, score_4
 
-                # Forma T horizontal (verificar que todos los Ã­ndices estÃ©n en lÃ­mites)
-                if (
-                    board[r, c - 1] == color
-                    and board[r, c + 1] == color
-                    and board[r - 1, c] == color
-                    and board[r + 1, c] == color
-                ):
-                    special_matches.append(
-                        [(r, c - 1), (r, c), (r, c + 1), (r - 1, c), (r + 1, c)]
-                    )
-
-        # Detectar formas L con verificaciÃ³n de lÃ­mites mÃ¡s cuidadosa
-        for r in range(rows - 2):
-            for c in range(cols - 2):
-                color = board[r, c]
-                if color == 0:
-                    continue
-
-                # Forma L (esquina superior izquierda) - verificar lÃ­mites antes de acceder
-                if (
-                    c + 2 < cols
-                    and r + 2 < rows
-                    and board[r, c + 1] == color
-                    and board[r, c + 2] == color
-                    and board[r + 1, c] == color
-                    and board[r + 2, c] == color
-                ):
-                    special_matches.append(
-                        [(r, c), (r, c + 1), (r, c + 2), (r + 1, c), (r + 2, c)]
-                    )
-
-                # Forma L (esquina superior derecha)
-                if (
-                    c + 2 < cols
-                    and r + 2 < rows
-                    and board[r, c] == color
-                    and board[r, c + 1] == color
-                    and board[r + 1, c + 2] == color
-                    and board[r + 2, c + 2] == color
-                ):
-                    special_matches.append(
-                        [(r, c), (r, c + 1), (r, c + 2), (r + 1, c + 2), (r + 2, c + 2)]
-                    )
-
-        return special_matches
-
-    def _calculate_match_score(self, matches: List[List[Tuple[int, int]]]) -> float:
-        """Calcula el score base de los matches encontrados."""
-        total_score = 0
-
-        for match in matches:
-            match_size = len(match)
-            if match_size == 3:
-                total_score += self.MATCH_3_SCORE
-            elif match_size == 4:
-                total_score += self.MATCH_4_SCORE
-            elif match_size >= 5:
-                total_score += self.MATCH_5_SCORE
-
-            # Bonus por formas especiales
-            if match_size > 4:
-                total_score += self.L_SHAPE_SCORE
-
-        return total_score
-
-    def _calculate_cascade_potential(
-        self, board: np.ndarray, matches: List[List[Tuple[int, int]]]
-    ) -> float:
-        """Calcula el potencial de cascada despuÃ©s del movimiento."""
+    def _calculate_cascade_potential(self, grid, matches):
+        """Estima el potencial de cascada de forma simple."""
+        # Esta es una heurística muy básica.
+        # Un método mejor analizaría la gravedad y qué fichas caerían dónde.
         if not matches:
             return 0
+        
+        # Si un match ocurre, las fichas de arriba caen.
+        # Si las fichas que caen son del mismo color que las de abajo, es bueno.
+        score = 0
+        temp_grid = grid.copy()
+        
+        # Marcar matches como vacíos (simula limpieza)
+        # Esto es una simplificación, no simula la caída real
+        for match_str in matches:
+            parts = match_str.split()
+            idx = int(parts[1])
+            if parts[0] == "Fila":
+                temp_grid[idx, :] = 0
+            else:
+                temp_grid[:, idx] = 0
 
-        # Simular eliminaciÃ³n de matches
-        test_board = board.copy()
-        for match in matches:
-            for r, c in match:
-                test_board[r, c] = 0
-
-        # Simular caÃ­da de cookies
-        test_board = self._simulate_gravity(test_board)
-
-        # Buscar nuevos matches despuÃ©s de la caÃ­da
-        new_matches = self._find_all_matches(test_board)
-
-        cascade_score = len(new_matches) * self.CASCADE_MULTIPLIER * self.MATCH_3_SCORE
-
-        return cascade_score
-
-    def _simulate_gravity(self, board: np.ndarray) -> np.ndarray:
-        """Simula la caÃ­da de cookies por gravedad."""
-        result = board.copy()
-        rows, cols = result.shape
-
+        # Ahora, buscar adyacencias verticales del mismo color
+        rows, cols = temp_grid.shape
         for c in range(cols):
-            # Extraer cookies no vacÃ­as de la columna
-            column = result[:, c]
-            non_zero = column[column != 0]
-
-            # Rellenar columna: vacÃ­os arriba, cookies abajo
-            result[:, c] = 0
-            if len(non_zero) > 0:
-                result[rows - len(non_zero) :, c] = non_zero
-
-        return result
-
-    def _calculate_strategic_value(
-        self, original_board: np.ndarray, new_board: np.ndarray, move: Move
-    ) -> float:
-        """Calcula el valor estratÃ©gico del movimiento."""
-        strategic_score = 0
-
-        # Bonus por crear setups para futuros matches
-        potential_setups = self._count_near_matches(new_board)
-        strategic_score += potential_setups * self.STRATEGIC_BONUS
-
-        # Penalty por crear tablero desequilibrado
-        color_distribution = self._analyze_color_distribution(new_board)
-        if color_distribution["balance_score"] < 0.3:
-            strategic_score -= 50
-
-        # Bonus por limpiar Ã¡reas problemÃ¡ticas
-        if self._clears_problematic_area(original_board, new_board):
-            strategic_score += 100
-
-        return strategic_score
-
-    def _count_near_matches(self, board: np.ndarray) -> int:
-        """Cuenta posiciones que estÃ¡n a un movimiento de crear un match."""
-        near_matches = 0
-        rows, cols = board.shape
-
-        # Buscar patrones de 2 cookies del mismo color que podrÃ­an formar match
-        for r in range(rows):
-            for c in range(cols - 2):
-                # PatrÃ³n AA_A o A_AA con verificaciÃ³n de lÃ­mites
-                if board[r, c] != 0:
-                    if board[r, c] == board[r, c + 1] and c + 2 < cols:
-                        if board[r, c + 2] == 0 or board[r, c + 2] == board[r, c]:
-                            near_matches += 1
-                    if (
-                        c + 2 < cols
-                        and board[r, c] == board[r, c + 2]
-                        and board[r, c + 1] == 0
-                    ):
-                        near_matches += 1
-
-        # Similar para patrones verticales
-        for c in range(cols):
-            for r in range(rows - 2):
-                if board[r, c] != 0:
-                    if board[r, c] == board[r + 1, c] and r + 2 < rows:
-                        if board[r + 2, c] == 0 or board[r + 2, c] == board[r, c]:
-                            near_matches += 1
-                    if (
-                        r + 2 < rows
-                        and board[r, c] == board[r + 2, c]
-                        and board[r + 1, c] == 0
-                    ):
-                        near_matches += 1
-
-        return near_matches
-
-    def _analyze_color_distribution(self, board: np.ndarray) -> Dict:
-        """Analiza la distribuciÃ³n de colores en el tablero."""
-        total_cookies = np.count_nonzero(board)
-        if total_cookies == 0:
-            return {
-                "balance_score": 0,
-                "color_counts": {1: 0, 2: 0, 3: 0},
-                "total_cookies": 0,
-            }
-
-        color_counts = {}
-        for color in [1, 2, 3]:  # Verde, Rojo, Amarillo
-            color_counts[color] = np.count_nonzero(board == color)
-
-        # Calcular balance (mÃ¡s equilibrado = mejor)
-        counts = list(color_counts.values())
-        if max(counts) == 0:
-            balance_score = 0
-        else:
-            balance_score = min(counts) / max(counts)
-
-        return {
-            "color_counts": color_counts,
-            "balance_score": balance_score,
-            "total_cookies": total_cookies,
-        }
-
-    def _clears_problematic_area(
-        self, old_board: np.ndarray, new_board: np.ndarray
-    ) -> bool:
-        """Verifica si el movimiento limpia Ã¡reas problemÃ¡ticas."""
-        # Ãreas problemÃ¡ticas: muchas cookies del mismo color agrupadas sin formar match
-        old_clusters = self._find_large_clusters(old_board)
-        new_clusters = self._find_large_clusters(new_board)
-
-        return len(old_clusters) > len(new_clusters)
-
-    def _find_large_clusters(self, board: np.ndarray) -> List:
-        """Encuentra clusters grandes de cookies del mismo color."""
-        # ImplementaciÃ³n simplificada
-        clusters = []
-        rows, cols = board.shape
-
-        for color in [1, 2, 3]:
-            color_positions = list(zip(*np.where(board == color)))
-            if len(color_positions) > 6:  # Cluster grande
-                clusters.append(color_positions)
-
-        return clusters
-
-    def _create_move_explanation(
-        self,
-        board: np.ndarray,
-        move: Move,
-        matches: List,
-        immediate_score: float,
-        cascade_potential: float,
-        strategic_value: float,
-    ) -> str:
-        """Crea una explicaciÃ³n detallada del movimiento."""
-        # Obtener colores reales de las posiciones
-        pos1_color = self.COLOR_NAMES.get(board[move.pos1], "Desconocido")
-        pos2_color = self.COLOR_NAMES.get(board[move.pos2], "Desconocido")
-
-        explanation = f"Intercambiar {move.move_type.value} en ({move.pos1[0]},{move.pos1[1]}) â†” ({move.pos2[0]},{move.pos2[1]})\n"
-        explanation += f"Colores: {pos1_color} â†” {pos2_color}\n"
-
-        if matches:
-            explanation += f"â€¢ Crea {len(matches)} match(es) inmediato(s) (+{immediate_score:.0f} pts)\n"
-
-        if cascade_potential > 0:
-            explanation += f"â€¢ Potencial de cascada (+{cascade_potential:.0f} pts)\n"
-
-        if strategic_value != 0:
-            explanation += f"â€¢ Valor estratÃ©gico ({strategic_value:+.0f} pts)\n"
-
-        return explanation
-
-    def _create_detailed_analysis(
-        self, board: np.ndarray, best_move: Move, top_moves: List[Move]
-    ) -> str:
-        """Crea un análisis detallado de la situaciÃ³n del tablero."""
-        analysis = f"ðŸ† MEJOR MOVIMIENTO (Score: {best_move.score:.1f})\n"
-        analysis += f"{best_move.explanation}\n"
-
-        analysis += f"\nðŸ“Š TOP 5 ALTERNATIVAS:\n"
-        for i, move in enumerate(top_moves[1:], 2):
-            if i <= 5:  # Limitar a top 5
-                analysis += f"{i}. Score {move.score:.1f}: {move.move_type.value} ({move.pos1[0]},{move.pos1[1]}) â†” ({move.pos2[0]},{move.pos2[1]})\n"
-
-        board_analysis = self._analyze_board_state(board)
-        analysis += f"\n“‹ ESTADO DEL TABLERO:\n{board_analysis}\n"
-
-        return analysis
-
-    def _analyze_board_state(self, board: np.ndarray) -> str:
-        """Analiza el estado general del tablero."""
-        color_dist = self._analyze_color_distribution(board)
-        near_matches = self._count_near_matches(board)
-
-        state = f"Total cookies: {color_dist['total_cookies']}\n"
-        state += f"Distribución: Verde={color_dist['color_counts'].get(1, 0)}, "
-        state += f"Rojo={color_dist['color_counts'].get(2, 0)}, "
-        state += f"Amarillo={color_dist['color_counts'].get(3, 0)}\n"
-        state += f"Balance de colores: {color_dist['balance_score']:.2f}\n"
-        state += f"Setups potenciales: {near_matches}\n"
-
-        return state
+            for r in range(rows - 1):
+                if temp_grid[r, c] != 0 and temp_grid[r, c] == temp_grid[r+1, c]:
+                    score += 1 # Potencial de match vertical post-caída
+        
+        return score
 
 
-def demo_usage():
-    """Ejemplo de uso del analizador."""
-    # Ejemplo de tablero (6x5)
-    sample_board = np.array(
-        [
-            [2, 1, 2, 1, 3],
-            [1, 3, 1, 3, 2],
-            [3, 2, 3, 2, 1],
-            [1, 3, 2, 1, 3],
-            [3, 2, 1, 3, 2],
-        ]
-    )
-
-
-    print("Tablero inicial:")
-    print(sample_board)
-    print("\nLeyenda: 0=Vací­o, 1=Verde, 2=Rojo, 3=Amarillo")
-
+if __name__ == '__main__':
     analyzer = CookieMovementAnalyzer()
-    result = analyzer.analyze_optimal_move(sample_board, strategy="balanced")
 
-    print("\n=== RESULTADO DEL ANALISIS ===")
-    print(result["analysis"])
+    # Grilla de ejemplo del README
+    example_grid = np.array([
+        [2, 1, 2, 1, 3],
+        [1, 3, 1, 3, 2],
+        [3, 2, 3, 2, 1],
+        [1, 3, 2, 1, 3],
+        [3, 0, 1, 3, 2]  # Suponiendo 0 como vacío
+    ])
+    
+    print("Grilla de ejemplo:")
+    print(example_grid)
+    
+    # Analizar con la estrategia balanceada
+    result = analyzer.analyze_optimal_move(example_grid, strategy="balanced")
+    best_move = result['best_move']
 
-    best_move = result["best_move"]
     if best_move:
-        print(
-            f"\nðŸŽ¯ Ejecutar: {best_move.move_type.value} swap entre {best_move.pos1} y {best_move.pos2}"
-        )
-        print(f"ðŸ’¯ Score esperado: {best_move.score:.1f}")
+        print(f"\nMejor movimiento encontrado (balanced):")
+        print(f"  Tipo: {best_move.type}")
+        print(f"  Mover: {best_move.pos1} <-> {best_move.pos2}")
+        print(f"  Puntaje: {best_move.score:.2f}")
+        print(f"  Detalles: {best_move.details}")
+        
+        # Probar otra estrategia
+        result_agg = analyzer.analyze_optimal_move(example_grid, strategy="aggressive")
+        best_move_agg = result_agg['best_move']
+        print(f"\nMejor movimiento encontrado (aggressive):")
+        print(f"  Tipo: {best_move_agg.type}")
+        print(f"  Mover: {best_move_agg.pos1} <-> {best_move_agg.pos2}")
+        print(f"  Puntaje: {best_move_agg.score:.2f}")
+        print(f"  Detalles: {best_move_agg.details}")
 
+    else:
+        print("\nNo se encontraron movimientos posibles.")
 
-if __name__ == "__main__":
-    demo_usage()
+    # Ejemplo de un movimiento que crea una línea
+    grid_easy = np.array([
+        [1, 2, 3, 4, 5],
+        [1, 1, 1, 1, 2], # Mover la fila 2 a la 1 haría match de 1s
+        [2, 3, 4, 5, 1],
+        [3, 4, 5, 1, 2],
+        [4, 5, 1, 2, 3],
+    ])
+    
+    print("\nGrilla con movimiento obvio:")
+    print(grid_easy)
+    result_easy = analyzer.analyze_optimal_move(grid_easy)
+    best_move_easy = result_easy['best_move']
+    
+    if best_move_easy:
+        print(f"\nMejor movimiento para la grilla fácil:")
+        print(f"  Tipo: {best_move_easy.type}")
+        print(f"  Mover: {best_move_easy.pos1} <-> {best_move_easy.pos2}")
+        print(f"  Puntaje: {best_move_easy.score:.2f}")
+    else:
+        print("No se encontró movimiento.")

@@ -75,7 +75,7 @@ class ImprovedCookieDetector:
         
         for contorno in contornos:
             area = cv2.contourArea(contorno)
-            if area <= 600:
+            if area <= self.config["min_area_cookie"]:
                 continue
                 
             if nombre_color == 'Verde' and not self._es_forma_circular(contorno):
@@ -361,29 +361,24 @@ class ImprovedCookieDetector:
                                grilla: np.ndarray, info: Dict):
         """Visualiza la detección y la grilla."""
         imagen_vis = imagen.copy()
-        
-        # Dibujar área de juego
-        cv2.rectangle(
-            imagen_vis,
-            (self.game_area['x_min'], self.game_area['y_min']),
-            (self.game_area['x_max'], self.game_area['y_max']),
-            (255, 0, 0), 2
-        )
+
+        # Dibujar zona de juego        
+        self._dibujar_zona_juego(imagen_vis)
         
         # Dibujar líneas de grilla
-        if info['filas_centroids'] and info['columnas_centroids']:
+        if info.get('filas_centroids') and info.get('columnas_centroids'):
             for y in info['filas_centroids']:
                 cv2.line(imagen_vis, 
-                        (self.game_area['x_min'], int(y)),
-                        (self.game_area['x_max'], int(y)),
-                        (255, 255, 0), 1)
-            
+                    (self.game_area['x_min'], int(y)),
+                    (self.game_area['x_max'], int(y)),
+                    (255, 255, 0), 1)
+                
             for x in info['columnas_centroids']:
                 cv2.line(imagen_vis,
-                        (int(x), self.game_area['y_min']),
-                        (int(x), self.game_area['y_max']),
-                        (255, 255, 0), 1)
-        
+                (int(x), self.game_area['y_min']),
+                (int(x), self.game_area['y_max']),
+                (255, 255, 0), 1)
+                    
         # Dibujar cookies válidas
         for cookie in cookies:
             if cookie.row != -1 and cookie.col != -1:
@@ -397,10 +392,12 @@ class ImprovedCookieDetector:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         # Dibujar cookies excluidas
-        for cookie in info['cookies_excluidas_lista']:
-            cv2.circle(imagen_vis, (cookie.x, cookie.y), 8, (0, 0, 255), 2)
-            cv2.putText(imagen_vis, "X", (cookie.x - 5, cookie.y + 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        # check if info has 'cookies_excluidas' key
+        if 'cookies_excluidas_lista' in info:
+            for cookie in info['cookies_excluidas_lista']:
+                cv2.circle(imagen_vis, (cookie.x, cookie.y), 8, (0, 0, 255), 2)
+                cv2.putText(imagen_vis, "X", (cookie.x - 5, cookie.y + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         
         cv2.imshow("Deteccion con Grilla Inteligente", imagen_vis)
         cv2.waitKey(0)
@@ -461,6 +458,26 @@ class ImprovedCookieDetector:
         print(grilla)
         print("="*50 + "\n")
 
+    # Se refactoriza 'imprimir_zona_juego' para recibir la imagen como np.ndarray
+    # y solo dibujar el rectángulo, eliminando la carga de imagen y el imshow/waitKey.
+    def _dibujar_zona_juego(self, imagen_vis: np.ndarray):
+        """
+        Dibuja el rectángulo de la zona de juego (self.game_area) en la imagen proporcionada.
+        """
+        # Obtener las coordenadas del área de juego
+        x_min = self.game_area['x_min']
+        y_min = self.game_area['y_min']
+        x_max = self.game_area['x_max']
+        y_max = self.game_area['y_max']
+
+        # Dibujar área de juego
+        cv2.rectangle(
+            imagen_vis,
+            (x_min, y_min),
+            (x_max, y_max),
+            CONF["game_area_border"]["color"],
+            CONF["game_area_border"]["thickness"]
+        )
 
 def main():
     """Función principal."""
@@ -468,8 +485,8 @@ def main():
     print("="*50 + "\n")
     
     detector = ImprovedCookieDetector(CONF)
-    resultado = detector.procesar_imagen('imgs/static_image.jpg')
-    
+
+    resultado = detector.procesar_imagen(CONF["images_path"] + '/001.png')
     if resultado:
         print("\n[OK] Procesamiento completado exitosamente")
         
@@ -479,3 +496,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+    

@@ -4,6 +4,11 @@ CONF = {
         "Rojo": {"min": [129, 92, 137], "max": [179, 255, 255]},
         "Amarillo": {"min": [6, 193, 226], "max": [33, 255, 255]},
     },
-    "game_area": {"x_min": 690, "x_max": 1275, "y_min": 340, "y_max": 940},
-    "images_path" : "./imgs/"
+    "game_area": {"x_min": 350, "x_max": 940, "y_min": 310, "y_max": 892},
+    "min_area_cookie": 350,
+    "images_path" : "./imgs/",
+    "game_area_border":{
+        "color": (9, 255, 0),
+        "thickness": 5
+    }
 }
