@@ -6,5 +6,9 @@ CONF = {
     },
     "game_area": {"x_min": 350, "x_max": 940, "y_min": 310, "y_max": 892},
     "min_area_cookie": 350,
-    "images_path" : "./imgs/"
+    "images_path" : "./imgs/",
+    "game_area_border":{
+        "color": (9, 255, 0),
+        "thickness": 5
+    }
 }

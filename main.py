@@ -367,15 +367,10 @@ class ImprovedCookieDetector:
             imagen_vis,
             (self.game_area['x_min'], self.game_area['y_min']),
             (self.game_area['x_max'], self.game_area['y_max']),
-            (255, 0, 0), 2
+            CONF["game_area_border"]["color"],
+            CONF["game_area_border"]["thickness"]
         )
         
-        # Dibujar líneas de grilla
-        # Antes (main.py, Línea 374):
-        # Dibujar líneas de grilla
-        #if info['filas_centroids'] and info['columnas_centroids']:
-
-        # Después (Modificación para prevenir KeyError):
         # Dibujar líneas de grilla
         if info.get('filas_centroids') and info.get('columnas_centroids'):
             for y in info['filas_centroids']:
@@ -487,13 +482,13 @@ class ImprovedCookieDetector:
             x_max = self.game_area['x_max']
             y_max = self.game_area['y_max']
             
-            # Dibujar área de juego (rectángulo azul)
+            # Dibujar área de juego 
             cv2.rectangle(
                 imagen_vis,
                 (x_min, y_min),
                 (x_max, y_max),
-                (9, 255, 0),  # Color Azul (BGR)
-                5             # Grosor de la línea
+                CONF["game_area_border"]["color"],
+                CONF["game_area_border"]["thickness"]
             )
             
             # Mostrar la imagen
@@ -507,9 +502,8 @@ def main():
     print("="*50 + "\n")
     
     detector = ImprovedCookieDetector(CONF)
-    detector.imprimir_zona_juego('imgs/002.png')
-    
-    resultado = detector.procesar_imagen('imgs/001.png')
+
+    resultado = detector.procesar_imagen(CONF["images_path"] + '/001.png')
     if resultado:
         print("\n[OK] Procesamiento completado exitosamente")
         
