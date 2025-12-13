@@ -4,7 +4,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from sklearn.cluster import DBSCAN
-
+import os
 
 @dataclass
 class Cookie:
@@ -359,6 +359,7 @@ class ImprovedCookieDetector:
 
     def _visualizar_resultados(self, imagen: np.ndarray, cookies: List[Cookie], 
                                grilla: np.ndarray, info: Dict):
+        
         """Visualiza la detección y la grilla."""
         imagen_vis = imagen.copy()
 
@@ -479,6 +480,14 @@ class ImprovedCookieDetector:
             CONF["game_area_border"]["thickness"]
         )
 
+    def return_array_of_images_from_folder(self) -> List[str]:
+        """Retorna una lista de rutas de imágenes desde una carpeta dada."""
+        imagenes = []
+        for archivo in os.listdir(CONF["images_path"]):
+            if archivo.lower().endswith(('.png', '.jpg', '.jpeg')):
+                imagenes.append(os.path.join(CONF["images_path"], archivo))
+        return imagenes 
+
 def main():
     """Función principal."""
     print("Sistema Mejorado de Deteccion Yoshi's Cookie")
@@ -486,12 +495,18 @@ def main():
     
     detector = ImprovedCookieDetector(CONF)
 
-    resultado = detector.procesar_imagen(CONF["images_path"] + '/001.png')
-    if resultado:
-        print("\n[OK] Procesamiento completado exitosamente")
-        
-        # Opcionalmente, analizar movimientos
-        print("\n¿Deseas analizar movimientos optimos? (requiere movement_analyzer.py)")
+    #resultado = detector.procesar_imagen(CONF["images_path"] + '/001.png')
+    #imagenes = os.listdir(CONF["images_path"])
+    #imagenes = [img for img in imagenes if img.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    imagenes = detector.return_array_of_images_from_folder()
+    for img_nombre in imagenes:
+        print(f"\nProcesando imagen: {img_nombre}")
+        resultado = detector.procesar_imagen(img_nombre)
+    #if resultado:
+    #    print("\n[OK] Procesamiento completado exitosamente")
+    #    
+    #    # Opcionalmente, analizar movimientos
+    #    print("\n¿Deseas analizar movimientos optimos? (requiere movement_analyzer.py)")
 
 
 if __name__ == '__main__':
