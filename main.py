@@ -361,15 +361,9 @@ class ImprovedCookieDetector:
                                grilla: np.ndarray, info: Dict):
         """Visualiza la detección y la grilla."""
         imagen_vis = imagen.copy()
-        
-        # Dibujar área de juego
-        cv2.rectangle(
-            imagen_vis,
-            (self.game_area['x_min'], self.game_area['y_min']),
-            (self.game_area['x_max'], self.game_area['y_max']),
-            CONF["game_area_border"]["color"],
-            CONF["game_area_border"]["thickness"]
-        )
+
+        # Dibujar zona de juego        
+        self._dibujar_zona_juego(imagen_vis)
         
         # Dibujar líneas de grilla
         if info.get('filas_centroids') and info.get('columnas_centroids'):
@@ -464,37 +458,26 @@ class ImprovedCookieDetector:
         print(grilla)
         print("="*50 + "\n")
 
-    def imprimir_zona_juego(self, imagen_path: str):
-            """
-            Carga una imagen, dibuja el rectángulo de la zona de juego
-            (self.game_area) y lo muestra en una ventana.
-            """
-            imagen = cv2.imread(imagen_path)
-            if imagen is None:
-                print(f"[ERROR] No se pudo cargar la imagen en: {imagen_path}")
-                return
-            
-            imagen_vis = imagen.copy()
-            
-            # Obtener las coordenadas del área de juego
-            x_min = self.game_area['x_min']
-            y_min = self.game_area['y_min']
-            x_max = self.game_area['x_max']
-            y_max = self.game_area['y_max']
-            
-            # Dibujar área de juego 
-            cv2.rectangle(
-                imagen_vis,
-                (x_min, y_min),
-                (x_max, y_max),
-                CONF["game_area_border"]["color"],
-                CONF["game_area_border"]["thickness"]
-            )
-            
-            # Mostrar la imagen
-            cv2.imshow("Zona de Juego Configurada", imagen_vis)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+    # Se refactoriza 'imprimir_zona_juego' para recibir la imagen como np.ndarray
+    # y solo dibujar el rectángulo, eliminando la carga de imagen y el imshow/waitKey.
+    def _dibujar_zona_juego(self, imagen_vis: np.ndarray):
+        """
+        Dibuja el rectángulo de la zona de juego (self.game_area) en la imagen proporcionada.
+        """
+        # Obtener las coordenadas del área de juego
+        x_min = self.game_area['x_min']
+        y_min = self.game_area['y_min']
+        x_max = self.game_area['x_max']
+        y_max = self.game_area['y_max']
+
+        # Dibujar área de juego
+        cv2.rectangle(
+            imagen_vis,
+            (x_min, y_min),
+            (x_max, y_max),
+            CONF["game_area_border"]["color"],
+            CONF["game_area_border"]["thickness"]
+        )
 
 def main():
     """Función principal."""
