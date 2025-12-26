@@ -201,15 +201,20 @@ class CookieMovementAnalyzer:
 
 if __name__ == '__main__':
     analyzer = CookieMovementAnalyzer()
-
+#
+#[[3 2 3 1]
+# [1 3 3 2]
+# [2 1 2 1]
+# [3 2 3 2]]
+#
     # Grilla de ejemplo del README
     example_grid = np.array([
-        [2, 1, 2, 1, 3],
-        [1, 3, 1, 3, 2],
-        [3, 2, 3, 2, 1],
-        [1, 3, 2, 1, 3],
-        [3, 0, 1, 3, 2]  # Suponiendo 0 como vacío
+        [3, 2, 3, 1],
+        [1, 3, 3, 2],
+        [2, 1, 2, 1],
+        [3, 2, 3, 2],
     ])
+
     
     print("Grilla de ejemplo:")
     print(example_grid)
@@ -239,11 +244,10 @@ if __name__ == '__main__':
 
     # Ejemplo de un movimiento que crea una línea
     grid_easy = np.array([
-        [1, 2, 3, 4, 5],
-        [1, 1, 1, 1, 2], # Mover la fila 2 a la 1 haría match de 1s
-        [2, 3, 4, 5, 1],
-        [3, 4, 5, 1, 2],
-        [4, 5, 1, 2, 3],
+        [3, 2, 3, 1],
+        [1, 3, 3, 2],
+        [2, 1, 2, 1],
+        [3, 2, 3, 2],
     ])
     
     print("\nGrilla con movimiento obvio:")

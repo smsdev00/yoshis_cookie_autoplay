@@ -134,6 +134,15 @@ class ImprovedCookieDetector:
                 if fila_label not in filas_dict:
                     filas_dict[fila_label] = []
                 filas_dict[fila_label].append((i, cookie))
+
+        # Agrupar cookies por columna
+        columnas_dict = {}
+        for i, cookie in enumerate(cookies):
+            col_label = columnas_labels[i]
+            if col_label != -1:
+                if col_label not in columnas_dict:
+                    columnas_dict[col_label] = []
+                columnas_dict[col_label].append((i, cookie))
         
         # Identificar filas jugables (filas con al menos 3 cookies)
         MIN_COOKIES_POR_FILA = 3
@@ -196,17 +205,57 @@ class ImprovedCookieDetector:
                     if gap_primera > gap_promedio * 1.5:
                         print(f"[INFO] Excluyendo fila superior (gap: {gap_primera:.1f} vs promedio: {gap_promedio:.1f})")
                         filas_core.discard(filas_ordenadas[0][0])
-        
-        # Filtrar cookies
+
+        # === FILTRADO DE COLUMNAS (cookies entrando por la derecha) ===
+
+        # Identificar columnas jugables (columnas con al menos 3 cookies)
+        MIN_COOKIES_POR_COLUMNA = 3
+        columnas_jugables = set()
+
+        for col_label, cookies_en_col in columnas_dict.items():
+            if len(cookies_en_col) >= MIN_COOKIES_POR_COLUMNA:
+                columnas_jugables.add(col_label)
+
+        # Excluir columna derecha si hay un gap grande con la siguiente
+        if len(columnas_jugables) > 1:
+            # Obtener posiciones X de cada columna
+            columnas_x = {}
+            for col_label in columnas_jugables:
+                cookies_col = [c for _, c in columnas_dict[col_label]]
+                x_promedio = np.mean([c.x for c in cookies_col])
+                columnas_x[col_label] = x_promedio
+
+            # Ordenar columnas por X (derecha a izquierda, la más a la derecha primero)
+            columnas_ordenadas = sorted(columnas_x.items(), key=lambda x: x[1], reverse=True)
+
+            # Verificar si la columna más a la derecha está muy separada
+            if len(columnas_ordenadas) >= 2:
+                gap_derecha = columnas_ordenadas[0][1] - columnas_ordenadas[1][1]
+
+                # Calcular gaps promedio entre otras columnas
+                gaps_cols = []
+                for i in range(1, len(columnas_ordenadas) - 1):
+                    gap = columnas_ordenadas[i][1] - columnas_ordenadas[i + 1][1]
+                    gaps_cols.append(gap)
+
+                if gaps_cols:
+                    gap_promedio_cols = np.mean(gaps_cols)
+                    # Si el gap de la columna derecha es > 1.5x el promedio, excluirla
+                    if gap_derecha > gap_promedio_cols * 1.5:
+                        print(f"[INFO] Excluyendo columna derecha (gap: {gap_derecha:.1f} vs promedio: {gap_promedio_cols:.1f})")
+                        columnas_jugables.discard(columnas_ordenadas[0][0])
+
+        # Filtrar cookies (debe estar en fila jugable Y columna jugable)
         cookies_jugables = []
-        
+
         for i, cookie in enumerate(cookies):
             fila_label = filas_labels[i]
-            if fila_label in filas_core:
+            col_label = columnas_labels[i]
+            if fila_label in filas_core and col_label in columnas_jugables:
                 cookies_jugables.append(cookie)
-        
+
         print(f"[INFO] Cookies jugables: {len(cookies_jugables)}/{len(cookies)}")
-        print(f"[INFO] Filas jugables detectadas: {len(filas_core)}")
+        print(f"[INFO] Filas jugables: {len(filas_core)}, Columnas jugables: {len(columnas_jugables)}")
         
         return cookies_jugables
 
@@ -338,12 +387,14 @@ class ImprovedCookieDetector:
             # Construir grilla
             grilla, info = self.construir_grilla_inteligente(cookies)
             
+            # Imprimir resumen
+            self._imprimir_resumen(cookies, grilla, info)
+            
             # Visualizar resultados
             imagen = cv2.imread(imagen_path)
             self._visualizar_resultados(imagen, cookies, grilla, info)
             
-            # Imprimir resumen
-            self._imprimir_resumen(cookies, grilla, info)
+            
             
             return {
                 "cookies": cookies,
