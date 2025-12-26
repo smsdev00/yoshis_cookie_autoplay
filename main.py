@@ -45,10 +45,13 @@ class ImprovedCookieDetector:
     def detectar_cookies(self, imagen_path: str) -> List[Cookie]:
         """Detecta todas las cookies en la imagen."""
         cookies = []
-        
+
         imagen = cv2.imread(imagen_path)
         if imagen is None:
             raise ValueError(f"Error: No se pudo cargar {imagen_path}")
+
+        # Remover la mira si está presente
+        imagen = self._remover_mira(imagen)
 
         hsv = cv2.cvtColor(imagen, cv2.COLOR_BGR2HSV)
         
@@ -102,6 +105,33 @@ class ImprovedCookieDetector:
         x, y, w, h = cv2.boundingRect(contorno)
         aspect_ratio = float(w) / h
         return 0.5 <= aspect_ratio <= 2.0
+
+    def _remover_mira(self, imagen: np.ndarray) -> np.ndarray:
+        """
+        Detecta y remueve la mira/cursor del tablero.
+        Usa inpainting para rellenar el área de la mira con colores del entorno.
+        """
+        if "mira_color" not in self.config:
+            return imagen
+
+        imagen_resultado = imagen.copy()
+        hsv = cv2.cvtColor(imagen, cv2.COLOR_BGR2HSV)
+
+        # Detectar píxeles de la mira
+        mira_config = self.config["mira_color"]
+        mascara_mira = cv2.inRange(hsv, np.array(mira_config['min']), np.array(mira_config['max']))
+
+        # Dilatar la máscara para cubrir mejor los bordes
+        kernel = np.ones((5, 5), np.uint8)
+        mascara_mira = cv2.dilate(mascara_mira, kernel, iterations=2)
+
+        # Verificar si se detectó la mira
+        if cv2.countNonZero(mascara_mira) > 100:
+            # Usar inpainting para rellenar el área de la mira
+            imagen_resultado = cv2.inpaint(imagen, mascara_mira, 3, cv2.INPAINT_TELEA)
+            print("[INFO] Mira detectada y removida")
+
+        return imagen_resultado
 
     def _obtener_centro(self, contorno) -> Tuple[int, int]:
         """Calcula centro del contorno."""
