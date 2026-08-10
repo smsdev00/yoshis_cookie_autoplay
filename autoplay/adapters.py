@@ -107,7 +107,8 @@ class YdotoolInputBackend:
         if proc.returncode:
             raise InputError(proc.stderr.strip() or f"ydotool falló enviando {button}")
 
-    def execute(self, move: Move, cursor: Tuple[int, int]) -> Tuple[int, int]:
+    def execute(self, move: Move, cursor: Tuple[int, int],
+                board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
         row, col = cursor
         while row < move.row:
             self.tap("down"); row += 1
@@ -128,4 +129,15 @@ class YdotoolInputBackend:
         )
         if proc.returncode:
             raise InputError(proc.stderr.strip() or "ydotool falló ejecutando el movimiento")
+        # El juego desplaza también la cookie seleccionada y el cursor.
+        if board_shape:
+            rows, cols = board_shape
+            if move.direction == Direction.LEFT:
+                col = (col - 1) % cols
+            elif move.direction == Direction.RIGHT:
+                col = (col + 1) % cols
+            elif move.direction == Direction.UP:
+                row = (row - 1) % rows
+            elif move.direction == Direction.DOWN:
+                row = (row + 1) % rows
         return row, col

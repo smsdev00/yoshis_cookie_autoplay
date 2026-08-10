@@ -67,7 +67,7 @@ class AutoPlayLoop:
             return before, move, None
         if self.executor is None:
             raise RuntimeError("No hay backend de entrada configurado")
-        self.cursor = self.executor.execute(move, self.cursor)
+        self.cursor = self.executor.execute(move, self.cursor, before.board.shape)
         time.sleep(self.config.animation_delay)
         after = self.wait_for_stable_board()
         expected = apply_move(before.board, move)
