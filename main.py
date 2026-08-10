@@ -60,6 +60,13 @@ class ImprovedCookieDetector:
         if image is None:
             raise ValueError(f"No se pudo cargar {imagen_path}")
 
+        return self.detectar_cookies_image(image)
+
+    def detectar_cookies_image(self, image: np.ndarray) -> List[Cookie]:
+        """Detecta piezas directamente desde una imagen BGR en memoria."""
+        if image is None or image.ndim != 3 or image.shape[2] != 3:
+            raise ValueError("Se esperaba una imagen BGR de tres canales")
+
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         candidates: List[Cookie] = []
 

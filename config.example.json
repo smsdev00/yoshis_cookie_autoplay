@@ -1,0 +1,11 @@
+{
+  "region": [0, 0, 1250, 950],
+  "capture": "spectacle",
+  "keys": {
+    "up": 63,
+    "down": 64,
+    "left": 65,
+    "right": 66,
+    "a": 67
+  }
+}
