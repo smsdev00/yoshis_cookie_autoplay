@@ -1,3 +1,13 @@
-export QT_QPA_PLATFORM=xcb 
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd -- "$(dirname -- "$0")"
 source venv/bin/activate
-python3 main.py
+
+if [[ "${1:-}" == "--gui" ]]; then
+    shift
+    export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+    exec python3 main.py "$@"
+fi
+
+exec python3 main.py --headless "$@"

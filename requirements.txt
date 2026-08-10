@@ -1,4 +1,3 @@
 opencv-python
-opencv-contrib-python
 numpy
-scikit-learn
+PyAutoGUI

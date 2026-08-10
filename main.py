@@ -1,596 +1,451 @@
-from config import CONF
+from __future__ import annotations
+
+import argparse
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
+
 import cv2
 import numpy as np
-from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
-from sklearn.cluster import DBSCAN
-import os
 
-@dataclass
+from config import CONF
+
+
+@dataclass(eq=False)
 class Cookie:
-    """Representa una cookie detectada."""
+    """Una pieza detectada, representada una sola vez por su centro."""
+
     color: str
     x: int
     y: int
     row: int = -1
     col: int = -1
+    confidence: float = 1.0
 
 
 class ImprovedCookieDetector:
-    """Sistema mejorado de detección de cookies con clustering inteligente."""
-    
+    """Detector determinista para las capturas pixel-art de Yoshi's Cookie."""
+
+    COLOR_MAP = {
+        "Verde": 1,
+        "Rojo": 2,
+        "Amarillo": 3,
+        "Cuadrada": 4,
+        "Yoshi": 5,
+    }
+    DRAW_COLORS = {
+        "Verde": (0, 255, 0),
+        "Rojo": (0, 0, 255),
+        "Amarillo": (0, 255, 255),
+        "Cuadrada": (80, 120, 190),
+        "Yoshi": (255, 255, 255),
+    }
+
     def __init__(self, config: dict):
         self.config = config
         self.cookies_colors = config["cookies_colors"]
         self.game_area = config["game_area"]
         self.images_path = config["images_path"]
-        
-        # Parámetros de clustering
-        self.CLUSTER_TOLERANCE = 35  # Tolerancia para agrupar cookies en filas/columnas
-        self.MIN_SAMPLES = 2  # Mínimo de cookies para formar un cluster
-        
-        # Colores para visualización
-        self.colores_dibujo = {
-            'Verde': (0, 255, 0),
-            'Rojo': (0, 0, 255),
-            'Amarillo': (0, 255, 255),
-        }
-        
-        self.COLOR_MAP = {
-            "Verde": 1,
-            "Rojo": 2,
-            "Amarillo": 3,
-        }
+        self._mira_actual: Optional[Tuple[int, int, int, int]] = None
+
+        detection = config.get("detection", {})
+        self.merge_distance = float(detection.get("merge_distance", 30))
+        self.neighbor_distance = float(detection.get("neighbor_distance", 108))
+        self.axis_tolerance = float(detection.get("axis_tolerance", 28))
 
     def detectar_cookies(self, imagen_path: str) -> List[Cookie]:
-        """Detecta todas las cookies en la imagen."""
-        cookies = []
+        """Detecta instancias, no contornos de color independientes."""
+        image = cv2.imread(imagen_path)
+        if image is None:
+            raise ValueError(f"No se pudo cargar {imagen_path}")
 
-        imagen = cv2.imread(imagen_path)
-        if imagen is None:
-            raise ValueError(f"Error: No se pudo cargar {imagen_path}")
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        candidates: List[Cookie] = []
 
-        # Remover la mira si está presente
-        imagen = self._remover_mira(imagen)
+        # Los símbolos centrales son anclajes estables y no se tocan entre piezas.
+        candidates.extend(self._symbol_candidates(hsv, "Rojo", 350, 800, (25, 45), (18, 32)))
+        candidates.extend(self._symbol_candidates(hsv, "Verde", 700, 1450, (30, 50), (25, 44)))
+        candidates.extend(self._symbol_candidates(hsv, "Amarillo", 750, 1450, (30, 50), (27, 44)))
 
-        hsv = cv2.cvtColor(imagen, cv2.COLOR_BGR2HSV)
-        
-        print("\n[INFO] Detectando cookies...")
-        for nombre_color, rangos in self.cookies_colors.items():
-            contornos_validos = self._filtrar_contornos(hsv, rangos, nombre_color)
-            
-            for contorno in contornos_validos:
-                cx, cy = self._obtener_centro(contorno)
-                
-                if self._esta_en_area_juego(cx, cy):
-                    cookie = Cookie(color=nombre_color, x=cx, y=cy)
-                    cookies.append(cookie)
-        
-        print(f"[INFO] Total cookies detectadas: {len(cookies)}")
+        # Las piezas cuadradas comparten un bloque marrón grande y uniforme.
+        candidates.extend(
+            self._mask_candidates(
+                hsv,
+                lower=(3, 180, 65),
+                upper=(12, 255, 130),
+                color="Cuadrada",
+                area_range=(1700, 2100),
+                width_range=(50, 78),
+                height_range=(48, 72),
+                use_bbox_center=True,
+            )
+        )
+
+        # El crosshair tapa el símbolo y deja una pequeña marca blanca. No es un
+        # tipo de cookie: clasificamos la pieza ocluida con los píxeles que aún
+        # sobreviven alrededor del cursor.
+        candidates.extend(self._occluded_candidates(hsv))
+
+        cookies = self._merge_candidates(candidates)
+        cookies.sort(key=lambda c: (c.y, c.x))
+        print(f"[INFO] Instancias detectadas: {len(cookies)}")
         return cookies
 
-    def _filtrar_contornos(self, hsv: np.ndarray, rangos: dict, nombre_color: str) -> List:
-        """Filtra contornos por color y forma."""
-        mascara = cv2.inRange(hsv, np.array(rangos['min']), np.array(rangos['max']))
-        contornos, _ = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        contornos_validos = []
-        
-        for contorno in contornos:
-            area = cv2.contourArea(contorno)
-            if area <= self.config["min_area_cookie"]:
+    def _symbol_candidates(
+        self,
+        hsv: np.ndarray,
+        color: str,
+        min_area: float,
+        max_area: float,
+        width_range: Tuple[int, int],
+        height_range: Tuple[int, int],
+    ) -> List[Cookie]:
+        ranges = self.cookies_colors[color]
+        return self._mask_candidates(
+            hsv,
+            ranges["min"],
+            ranges["max"],
+            color,
+            (min_area, max_area),
+            width_range,
+            height_range,
+        )
+
+    def _mask_candidates(
+        self,
+        hsv: np.ndarray,
+        lower: Sequence[int],
+        upper: Sequence[int],
+        color: str,
+        area_range: Tuple[float, float],
+        width_range: Tuple[int, int],
+        height_range: Tuple[int, int],
+        use_bbox_center: bool = False,
+    ) -> List[Cookie]:
+        mask = cv2.inRange(hsv, np.asarray(lower, np.uint8), np.asarray(upper, np.uint8))
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        result = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            x, y, width, height = cv2.boundingRect(contour)
+            if not (area_range[0] <= area <= area_range[1]):
                 continue
-                
-            if nombre_color == 'Verde' and not self._es_forma_circular(contorno):
+            if not (width_range[0] <= width <= width_range[1]):
                 continue
-                    
-            if not self._tiene_aspect_ratio_valido(contorno):
+            if not (height_range[0] <= height <= height_range[1]):
                 continue
-                
-            contornos_validos.append(contorno)
-            
-        return contornos_validos
+            if use_bbox_center:
+                cx, cy = x + width // 2, y + height // 2
+            else:
+                cx, cy = self._contour_center(contour)
+            if self._in_game_area(cx, cy):
+                result.append(Cookie(color, cx, cy, confidence=0.98))
+        return result
 
-    def _es_forma_circular(self, contorno) -> bool:
-        """Verifica forma circular."""
-        area = cv2.contourArea(contorno)
-        perimetro = cv2.arcLength(contorno, True)
-        if perimetro == 0:
-            return False
-        circularidad = 4 * np.pi * area / (perimetro * perimetro)
-        return circularidad >= 0.6
+    def _occluded_candidates(self, hsv: np.ndarray) -> List[Cookie]:
+        white = cv2.inRange(hsv, np.array((0, 0, 240), np.uint8), np.array((179, 70, 255), np.uint8))
+        yellow_cfg = self.cookies_colors["Amarillo"]
+        yellow = cv2.inRange(
+            hsv,
+            np.asarray(yellow_cfg["min"], np.uint8),
+            np.asarray(yellow_cfg["max"], np.uint8),
+        )
+        contours, _ = cv2.findContours(white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        result = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            x, y, width, height = cv2.boundingRect(contour)
+            if not (40 <= area <= 100 and 10 <= width <= 20 and 9 <= height <= 18):
+                continue
+            cx, cy = x + width // 2, y + height // 2
+            if not self._in_game_area(cx, cy):
+                continue
+            y1, y2 = max(0, cy - 35), min(yellow.shape[0], cy + 36)
+            x1, x2 = max(0, cx - 35), min(yellow.shape[1], cx + 36)
+            if cv2.countNonZero(yellow[y1:y2, x1:x2]) < 150:
+                continue
+            # El centro blanco está unos píxeles a la izquierda/arriba del centro
+            # geométrico de la pieza en las capturas originales.
+            cookie_x, cookie_y = cx + 7, cy + 6
+            color = self._classify_under_crosshair(hsv, cookie_x, cookie_y)
+            result.append(Cookie(color, cookie_x, cookie_y, confidence=0.96))
+        return result
 
-    def _tiene_aspect_ratio_valido(self, contorno) -> bool:
-        """Verifica aspect ratio válido."""
-        x, y, w, h = cv2.boundingRect(contorno)
-        aspect_ratio = float(w) / h
-        return 0.5 <= aspect_ratio <= 2.0
+    def _classify_under_crosshair(self, hsv: np.ndarray, x: int, y: int) -> str:
+        """Clasifica usando el símbolo/borde que queda visible bajo el cursor."""
+        crop = hsv[max(0, y - 30):y + 31, max(0, x - 34):x + 35]
 
-    def _remover_mira(self, imagen: np.ndarray) -> np.ndarray:
-        """
-        Detecta y remueve la mira/cursor del tablero.
-        Usa inpainting para rellenar el área de la mira con colores del entorno.
-        """
-        if "mira_color" not in self.config:
-            return imagen
+        def pixels(lower: Sequence[int], upper: Sequence[int]) -> int:
+            mask = cv2.inRange(
+                crop,
+                np.asarray(lower, np.uint8),
+                np.asarray(upper, np.uint8),
+            )
+            return cv2.countNonZero(mask)
 
-        imagen_resultado = imagen.copy()
-        hsv = cv2.cvtColor(imagen, cv2.COLOR_BGR2HSV)
+        brown = pixels((3, 180, 65), (12, 255, 130))
+        red_cfg = self.cookies_colors["Rojo"]
+        green_cfg = self.cookies_colors["Verde"]
+        red = pixels(red_cfg["min"], red_cfg["max"])
+        green = pixels(green_cfg["min"], green_cfg["max"])
 
-        # Detectar píxeles de la mira
-        mira_config = self.config["mira_color"]
-        mascara_mira = cv2.inRange(hsv, np.array(mira_config['min']), np.array(mira_config['max']))
+        # La cuadrada conserva un bloque marrón mucho mayor (>1400 px en las
+        # muestras); las redondas verdes tienen alrededor de 380 px marrones.
+        if brown > 800:
+            return "Cuadrada"
+        if red > 80:
+            return "Rojo"
+        if green > 50:
+            return "Verde"
+        return "Amarillo"
 
-        # Dilatar la máscara para cubrir mejor los bordes
-        kernel = np.ones((5, 5), np.uint8)
-        mascara_mira = cv2.dilate(mascara_mira, kernel, iterations=2)
-
-        # Verificar si se detectó la mira
-        if cv2.countNonZero(mascara_mira) > 100:
-            # Usar inpainting para rellenar el área de la mira
-            imagen_resultado = cv2.inpaint(imagen, mascara_mira, 3, cv2.INPAINT_TELEA)
-            print("[INFO] Mira detectada y removida")
-
-        return imagen_resultado
-
-    def _obtener_centro(self, contorno) -> Tuple[int, int]:
-        """Calcula centro del contorno."""
-        momentos = cv2.moments(contorno)
-        if momentos["m00"] == 0:
-            return (0, 0)
-        cx = int(momentos["m10"] / momentos["m00"])
-        cy = int(momentos["m01"] / momentos["m00"])
-        return cx, cy
-
-    def _esta_en_area_juego(self, x: int, y: int) -> bool:
-        """Verifica si está en área de juego."""
-        return (self.game_area['x_min'] <= x <= self.game_area['x_max'] and
-                self.game_area['y_min'] <= y <= self.game_area['y_max'])
-
-    def _filtrar_cookies_no_jugables(self, cookies: List[Cookie], filas_labels: np.ndarray, 
-                                      columnas_labels: np.ndarray) -> List[Cookie]:
-        """
-        Filtra cookies que no son parte del tablero jugable.
-        Criterios:
-        1. Excluir filas con menos de 3 cookies (filas incompletas/cayendo)
-        2. Excluir cookies que no tienen suficientes vecinas en su columna
-        3. Verificar densidad de la fila
-        """
-        # Agrupar cookies por fila
-        filas_dict = {}
-        for i, cookie in enumerate(cookies):
-            fila_label = filas_labels[i]
-            if fila_label != -1:
-                if fila_label not in filas_dict:
-                    filas_dict[fila_label] = []
-                filas_dict[fila_label].append((i, cookie))
-
-        # Agrupar cookies por columna
-        columnas_dict = {}
-        for i, cookie in enumerate(cookies):
-            col_label = columnas_labels[i]
-            if col_label != -1:
-                if col_label not in columnas_dict:
-                    columnas_dict[col_label] = []
-                columnas_dict[col_label].append((i, cookie))
-        
-        # Identificar filas jugables (filas con al menos 3 cookies)
-        MIN_COOKIES_POR_FILA = 3
-        filas_jugables = set()
-        
-        for fila_label, cookies_en_fila in filas_dict.items():
-            if len(cookies_en_fila) >= MIN_COOKIES_POR_FILA:
-                filas_jugables.add(fila_label)
-        
-        if not filas_jugables:
-            return []
-        
-        # Calcular densidad de cada fila (cookies por unidad de ancho)
-        densidades_filas = {}
-        for fila_label in filas_jugables:
-            cookies_fila = [c for _, c in filas_dict[fila_label]]
-            xs = [c.x for c in cookies_fila]
-            ancho_fila = max(xs) - min(xs) if len(xs) > 1 else 1
-            densidad = len(cookies_fila) / max(ancho_fila, 1)
-            densidades_filas[fila_label] = densidad
-        
-        # Identificar el "core" del tablero (filas con mayor densidad)
-        if densidades_filas:
-            densidad_media = np.median(list(densidades_filas.values()))
-            UMBRAL_DENSIDAD = densidad_media * 0.6  # 60% de la densidad media
-            
-            # Filtrar filas con baja densidad (probablemente cayendo)
-            filas_core = {
-                label for label, densidad in densidades_filas.items() 
-                if densidad >= UMBRAL_DENSIDAD
-            }
-        else:
-            filas_core = filas_jugables
-        
-        # ADICIONAL: Excluir la fila superior si hay una brecha grande con la siguiente
-        if len(filas_core) > 1:
-            # Obtener posiciones Y de cada fila
-            filas_y = {}
-            for fila_label in filas_core:
-                cookies_fila = [c for _, c in filas_dict[fila_label]]
-                y_promedio = np.mean([c.y for c in cookies_fila])
-                filas_y[fila_label] = y_promedio
-            
-            # Ordenar filas por Y (arriba a abajo)
-            filas_ordenadas = sorted(filas_y.items(), key=lambda x: x[1])
-            
-            # Verificar si la primera fila está muy separada de las demás
-            if len(filas_ordenadas) >= 2:
-                gap_primera = filas_ordenadas[1][1] - filas_ordenadas[0][1]
-                
-                # Calcular gaps promedio entre otras filas
-                gaps = []
-                for i in range(1, len(filas_ordenadas) - 1):
-                    gap = filas_ordenadas[i + 1][1] - filas_ordenadas[i][1]
-                    gaps.append(gap)
-                
-                if gaps:
-                    gap_promedio = np.mean(gaps)
-                    # Si el gap de la primera fila es > 1.5x el promedio, excluirla
-                    if gap_primera > gap_promedio * 1.5:
-                        print(f"[INFO] Excluyendo fila superior (gap: {gap_primera:.1f} vs promedio: {gap_promedio:.1f})")
-                        filas_core.discard(filas_ordenadas[0][0])
-
-        # === FILTRADO DE COLUMNAS (cookies entrando por la derecha) ===
-
-        # Identificar columnas jugables (columnas con al menos 3 cookies)
-        MIN_COOKIES_POR_COLUMNA = 3
-        columnas_jugables = set()
-
-        for col_label, cookies_en_col in columnas_dict.items():
-            if len(cookies_en_col) >= MIN_COOKIES_POR_COLUMNA:
-                columnas_jugables.add(col_label)
-
-        # Excluir columna derecha si hay un gap grande con la siguiente
-        if len(columnas_jugables) > 1:
-            # Obtener posiciones X de cada columna
-            columnas_x = {}
-            for col_label in columnas_jugables:
-                cookies_col = [c for _, c in columnas_dict[col_label]]
-                x_promedio = np.mean([c.x for c in cookies_col])
-                columnas_x[col_label] = x_promedio
-
-            # Ordenar columnas por X (derecha a izquierda, la más a la derecha primero)
-            columnas_ordenadas = sorted(columnas_x.items(), key=lambda x: x[1], reverse=True)
-
-            # Verificar si la columna más a la derecha está muy separada
-            if len(columnas_ordenadas) >= 2:
-                gap_derecha = columnas_ordenadas[0][1] - columnas_ordenadas[1][1]
-
-                # Calcular gaps promedio entre otras columnas
-                gaps_cols = []
-                for i in range(1, len(columnas_ordenadas) - 1):
-                    gap = columnas_ordenadas[i][1] - columnas_ordenadas[i + 1][1]
-                    gaps_cols.append(gap)
-
-                if gaps_cols:
-                    gap_promedio_cols = np.mean(gaps_cols)
-                    # Si el gap de la columna derecha es > 1.5x el promedio, excluirla
-                    if gap_derecha > gap_promedio_cols * 1.5:
-                        print(f"[INFO] Excluyendo columna derecha (gap: {gap_derecha:.1f} vs promedio: {gap_promedio_cols:.1f})")
-                        columnas_jugables.discard(columnas_ordenadas[0][0])
-
-        # Filtrar cookies (debe estar en fila jugable Y columna jugable)
-        cookies_jugables = []
-
-        for i, cookie in enumerate(cookies):
-            fila_label = filas_labels[i]
-            col_label = columnas_labels[i]
-            if fila_label in filas_core and col_label in columnas_jugables:
-                cookies_jugables.append(cookie)
-
-        print(f"[INFO] Cookies jugables: {len(cookies_jugables)}/{len(cookies)}")
-        print(f"[INFO] Filas jugables: {len(filas_core)}, Columnas jugables: {len(columnas_jugables)}")
-        
-        return cookies_jugables
+    def _merge_candidates(self, candidates: List[Cookie]) -> List[Cookie]:
+        """Fusiona anclajes coincidentes, priorizando las clases más específicas."""
+        priority = {"Yoshi": 5, "Cuadrada": 4, "Rojo": 3, "Verde": 3, "Amarillo": 2}
+        merged: List[Cookie] = []
+        for candidate in sorted(candidates, key=lambda c: priority[c.color], reverse=True):
+            existing = next(
+                (
+                    item
+                    for item in merged
+                    if np.hypot(item.x - candidate.x, item.y - candidate.y) <= self.merge_distance
+                ),
+                None,
+            )
+            if existing is None:
+                merged.append(candidate)
+            elif priority[candidate.color] > priority[existing.color]:
+                existing.color = candidate.color
+                existing.x, existing.y = candidate.x, candidate.y
+                existing.confidence = candidate.confidence
+        return merged
 
     def construir_grilla_inteligente(self, cookies: List[Cookie]) -> Tuple[np.ndarray, Dict]:
-        """
-        Construye la grilla usando clustering para detectar filas y columnas automáticamente.
-        """
+        """Selecciona el componente inferior izquierdo y lo cuantiza a una grilla."""
+        for cookie in cookies:
+            cookie.row = cookie.col = -1
         if not cookies:
-            return np.array([[]]), {}
-        
-        # Extraer coordenadas
-        coords_y = np.array([c.y for c in cookies]).reshape(-1, 1)
-        coords_x = np.array([c.x for c in cookies]).reshape(-1, 1)
-        
-        # Clustering en Y (filas)
-        clustering_y = DBSCAN(eps=self.CLUSTER_TOLERANCE, min_samples=self.MIN_SAMPLES)
-        filas_labels = clustering_y.fit_predict(coords_y)
-        
-        # Clustering en X (columnas)
-        clustering_x = DBSCAN(eps=self.CLUSTER_TOLERANCE, min_samples=self.MIN_SAMPLES)
-        columnas_labels = clustering_x.fit_predict(coords_x)
-        
-        # NUEVO: Filtrar filas no jugables (filas cayendo o incompletas)
-        cookies_jugables = self._filtrar_cookies_no_jugables(cookies, filas_labels, columnas_labels)
-        
-        if not cookies_jugables:
-            print("[WARN] No se encontraron cookies jugables")
-            return np.array([[]]), {}
-        
-        # Recalcular clustering solo con cookies jugables
-        coords_y_jugables = np.array([c.y for c in cookies_jugables]).reshape(-1, 1)
-        coords_x_jugables = np.array([c.x for c in cookies_jugables]).reshape(-1, 1)
-        
-        filas_labels = clustering_y.fit_predict(coords_y_jugables)
-        columnas_labels = clustering_x.fit_predict(coords_x_jugables)
-        
-        # Actualizar referencias
-        cookies_originales = cookies
-        cookies = cookies_jugables
-        
-        # Verificar que se detectaron clusters válidos
-        num_filas = len(set(filas_labels)) - (1 if -1 in filas_labels else 0)
-        num_cols = len(set(columnas_labels)) - (1 if -1 in columnas_labels else 0)
-        
-        if num_filas == 0 or num_cols == 0:
-            print("[WARN] No se detectaron suficientes filas/columnas")
-            return np.array([[]]), {}
-        
-        # Calcular centroides de clusters
-        filas_centroids = {}
-        for label in set(filas_labels):
-            if label != -1:
-                indices = np.where(filas_labels == label)[0]
-                centroid = np.mean(coords_y_jugables[indices])
-                filas_centroids[label] = centroid
-        
-        columnas_centroids = {}
-        for label in set(columnas_labels):
-            if label != -1:
-                indices = np.where(columnas_labels == label)[0]
-                centroid = np.mean(coords_x_jugables[indices])
-                columnas_centroids[label] = centroid
-        
-        # Ordenar clusters por posición
-        filas_ordenadas = sorted(filas_centroids.items(), key=lambda x: x[1])
-        columnas_ordenadas = sorted(columnas_centroids.items(), key=lambda x: x[1])
-        
-        # Crear mapeo de labels a índices de grilla
-        fila_label_to_idx = {label: idx for idx, (label, _) in enumerate(filas_ordenadas)}
-        col_label_to_idx = {label: idx for idx, (label, _) in enumerate(columnas_ordenadas)}
-        
-        # Asignar posiciones de grilla a cada cookie
-        cookies_excluidas = []
-        for i, cookie in enumerate(cookies):
-            fila_label = filas_labels[i]
-            col_label = columnas_labels[i]
-            
-            if fila_label != -1 and col_label != -1:
-                cookie.row = fila_label_to_idx[fila_label]
-                cookie.col = col_label_to_idx[col_label]
-            else:
-                cookies_excluidas.append(cookie)
-        
-        # Agregar cookies no jugables a la lista de excluidas
-        cookies_no_jugables = [c for c in cookies_originales if c not in cookies_jugables]
-        cookies_excluidas.extend(cookies_no_jugables)
-        
-        # Crear grilla
-        grilla = np.zeros((num_filas, num_cols), dtype=int)
-        cookies_validas = [c for c in cookies if c.row != -1 and c.col != -1]
-        
-        # Rellenar grilla (si hay múltiples cookies en la misma celda, usar la más común)
-        celda_cookies = {}
-        for cookie in cookies_validas:
-            key = (cookie.row, cookie.col)
-            if key not in celda_cookies:
-                celda_cookies[key] = []
-            celda_cookies[key].append(cookie)
-        
-        for (row, col), cookies_en_celda in celda_cookies.items():
-            # Si hay múltiples, usar la más frecuente por color
-            colores = [c.color for c in cookies_en_celda]
-            color_mas_comun = max(set(colores), key=colores.count)
-            grilla[row, col] = self.COLOR_MAP[color_mas_comun]
-        
-        info = {
-            "num_filas": num_filas,
-            "num_columnas": num_cols,
-            "cookies_validas": len(cookies_validas),
-            "cookies_excluidas": len(cookies_excluidas),
-            "cookies_excluidas_lista": cookies_excluidas,
-            "filas_centroids": [c for _, c in filas_ordenadas],
-            "columnas_centroids": [c for _, c in columnas_ordenadas],
-            "cookies_por_celda": celda_cookies
-        }
-        
-        return grilla, info
+            return np.empty((0, 0), dtype=int), {}
 
-    def procesar_imagen(self, imagen_path: str) -> Dict:
-        """Función principal de procesamiento."""
+        components = self._spatial_components(cookies)
+        playable = self._choose_bottom_left_component(components)
+        excluded = [cookie for cookie in cookies if cookie not in playable]
+
+        row_centers = self._cluster_axis([cookie.y for cookie in playable])
+        col_centers = self._cluster_axis([cookie.x for cookie in playable])
+        grid = np.zeros((len(row_centers), len(col_centers)), dtype=int)
+        cells: Dict[Tuple[int, int], List[Cookie]] = {}
+
+        for cookie in playable:
+            row = int(np.argmin(np.abs(np.asarray(row_centers) - cookie.y)))
+            col = int(np.argmin(np.abs(np.asarray(col_centers) - cookie.x)))
+            if abs(row_centers[row] - cookie.y) > self.axis_tolerance:
+                excluded.append(cookie)
+                continue
+            if abs(col_centers[col] - cookie.x) > self.axis_tolerance:
+                excluded.append(cookie)
+                continue
+            cookie.row, cookie.col = row, col
+            cells.setdefault((row, col), []).append(cookie)
+
+        collisions = 0
+        for (row, col), items in cells.items():
+            if len(items) > 1:
+                collisions += len(items) - 1
+            best = max(items, key=lambda item: item.confidence)
+            grid[row, col] = self.COLOR_MAP[best.color]
+
+        occupied = int(np.count_nonzero(grid))
+        confidence = occupied / max(len(playable), 1)
+        if collisions:
+            confidence *= 0.5
+        info = {
+            "num_filas": len(row_centers),
+            "num_columnas": len(col_centers),
+            "cookies_validas": occupied,
+            "cookies_excluidas": len(excluded),
+            "cookies_excluidas_lista": excluded,
+            "filas_centroids": row_centers,
+            "columnas_centroids": col_centers,
+            "cookies_por_celda": cells,
+            "componentes": len(components),
+            "colisiones": collisions,
+            "confianza": confidence,
+        }
+        print(
+            f"[INFO] Componente jugable inferior izquierdo: {occupied} piezas, "
+            f"grilla {grid.shape[0]}x{grid.shape[1]}, confianza {confidence:.2f}"
+        )
+        return grid, info
+
+    def _spatial_components(self, cookies: List[Cookie]) -> List[List[Cookie]]:
+        remaining = set(cookies)
+        components = []
+        while remaining:
+            seed = remaining.pop()
+            component = [seed]
+            pending = [seed]
+            while pending:
+                current = pending.pop()
+                neighbors = [
+                    other
+                    for other in remaining
+                    if np.hypot(current.x - other.x, current.y - other.y) <= self.neighbor_distance
+                ]
+                for neighbor in neighbors:
+                    remaining.remove(neighbor)
+                    component.append(neighbor)
+                    pending.append(neighbor)
+            components.append(component)
+        return components
+
+    @staticmethod
+    def _choose_bottom_left_component(components: List[List[Cookie]]) -> List[Cookie]:
+        # Tamaño evita que un píxel/indicador aislado situado más abajo gane. La
+        # posición de la base domina y, a igual base, gana el inicio más izquierdo.
+        viable = [component for component in components if len(component) >= 2]
+        if not viable:
+            viable = components
+        global_bottom = max(max(cookie.y for cookie in component) for component in viable)
+        bottom_band = [
+            component
+            for component in viable
+            if max(cookie.y for cookie in component) >= global_bottom - 45
+        ]
+        return min(
+            bottom_band,
+            key=lambda component: (
+                min(cookie.x for cookie in component),
+                -len(component),
+                -max(cookie.y for cookie in component),
+            ),
+        )
+
+    def _cluster_axis(self, values: List[int]) -> List[float]:
+        clusters: List[List[int]] = []
+        for value in sorted(values):
+            if not clusters or value - float(np.mean(clusters[-1])) > self.axis_tolerance:
+                clusters.append([value])
+            else:
+                clusters[-1].append(value)
+        return [float(np.mean(cluster)) for cluster in clusters]
+
+    @staticmethod
+    def _contour_center(contour) -> Tuple[int, int]:
+        moments = cv2.moments(contour)
+        if moments["m00"] == 0:
+            x, y, width, height = cv2.boundingRect(contour)
+            return x + width // 2, y + height // 2
+        return int(moments["m10"] / moments["m00"]), int(moments["m01"] / moments["m00"])
+
+    def _in_game_area(self, x: int, y: int) -> bool:
+        area = self.game_area
+        return area["x_min"] <= x <= area["x_max"] and area["y_min"] <= y <= area["y_max"]
+
+    def procesar_imagen(
+        self,
+        imagen_path: str,
+        visualize: bool = True,
+        output_path: Optional[str] = None,
+    ) -> Optional[Dict]:
         try:
-            # Detectar cookies
             cookies = self.detectar_cookies(imagen_path)
-            
-            if not cookies:
-                print("[ERROR] No se detectaron cookies")
+            grid, info = self.construir_grilla_inteligente(cookies)
+            if grid.size == 0:
+                print(f"[WARN] No se pudo construir una grilla para {imagen_path}")
                 return None
-            
-            # Construir grilla
-            grilla, info = self.construir_grilla_inteligente(cookies)
-            
-            # Imprimir resumen
-            self._imprimir_resumen(cookies, grilla, info)
-            
-            # Visualizar resultados
-            imagen = cv2.imread(imagen_path)
-            self._visualizar_resultados(imagen, cookies, grilla, info)
-            
-            
-            
-            return {
-                "cookies": cookies,
-                "grilla": grilla,
-                "info": info
-            }
-            
-        except Exception as e:
-            print(f"[ERROR] Error: {e}")
-            import traceback
-            traceback.print_exc()
+            self._print_summary(imagen_path, grid, info)
+            if visualize or output_path:
+                image = cv2.imread(imagen_path)
+                overlay = self._render_results(image, cookies, info)
+                if output_path:
+                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                    cv2.imwrite(output_path, overlay)
+                if visualize:
+                    cv2.imshow("Deteccion Yoshi's Cookie", overlay)
+                    cv2.waitKey(0)
+                    cv2.destroyAllWindows()
+            return {"cookies": cookies, "grilla": grid, "info": info}
+        except Exception as exc:
+            print(f"[ERROR] {imagen_path}: {exc}")
             return None
 
-    def _visualizar_resultados(self, imagen: np.ndarray, cookies: List[Cookie], 
-                               grilla: np.ndarray, info: Dict):
-        
-        """Visualiza la detección y la grilla."""
-        imagen_vis = imagen.copy()
-
-        # Dibujar zona de juego        
-        self._dibujar_zona_juego(imagen_vis)
-        
-        # Dibujar líneas de grilla
-        if info.get('filas_centroids') and info.get('columnas_centroids'):
-            for y in info['filas_centroids']:
-                cv2.line(imagen_vis, 
-                    (self.game_area['x_min'], int(y)),
-                    (self.game_area['x_max'], int(y)),
-                    (255, 255, 0), 1)
-                
-            for x in info['columnas_centroids']:
-                cv2.line(imagen_vis,
-                (int(x), self.game_area['y_min']),
-                (int(x), self.game_area['y_max']),
-                (255, 255, 0), 1)
-                    
-        # Dibujar cookies válidas
-        for cookie in cookies:
-            if cookie.row != -1 and cookie.col != -1:
-                color = self.colores_dibujo.get(cookie.color, (255, 255, 255))
-                cv2.circle(imagen_vis, (cookie.x, cookie.y), 8, color, -1)
-                cv2.circle(imagen_vis, (cookie.x, cookie.y), 10, (0, 0, 0), 2)
-                
-                # Mostrar posición de grilla
-                texto = f"{cookie.row},{cookie.col}"
-                cv2.putText(imagen_vis, texto, (cookie.x - 15, cookie.y - 15),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
-        # Dibujar cookies excluidas
-        # check if info has 'cookies_excluidas' key
-        if 'cookies_excluidas_lista' in info:
-            for cookie in info['cookies_excluidas_lista']:
-                cv2.circle(imagen_vis, (cookie.x, cookie.y), 8, (0, 0, 255), 2)
-                cv2.putText(imagen_vis, "X", (cookie.x - 5, cookie.y + 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-        
-        cv2.imshow("Deteccion con Grilla Inteligente", imagen_vis)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    def _imprimir_resumen(self, cookies: List[Cookie], grilla: np.ndarray, info: Dict):
-        """Imprime resumen de detección."""
-        print("\n" + "="*50)
-        print("RESUMEN DE DETECCION")
-        print("="*50)
-        
-        # Contar por color
-        conteo_colores = {}
-        for cookie in cookies:
-            if cookie.row != -1:  # Solo contar cookies válidas
-                conteo_colores[cookie.color] = conteo_colores.get(cookie.color, 0) + 1
-        
-        for color, cantidad in conteo_colores.items():
-            print(f"{color}: {cantidad} cookies")
-        
-        print(f"\nCookies validas en grilla: {info['cookies_validas']}")
-        print(f"Cookies excluidas: {info['cookies_excluidas']}")
-        print(f"Dimension de grilla: {grilla.shape[0]} filas x {grilla.shape[1]} columnas")
-        
-        if info['cookies_excluidas'] > 0:
-            print(f"\nCookies excluidas (outliers):")
-            for cookie in info['cookies_excluidas_lista']:
-                print(f"   {cookie.color} en ({cookie.x}, {cookie.y})")
-        
-        print("\n" + "="*50)
-        print("GRILLA FINAL")
-        print("="*50)
-        print("Leyenda: . = Vacio | V = Verde | R = Rojo | A = Amarillo")
-        print()
-        
-        # Crear array con letras
-        letra_map = {0: ".", 1: "V", 2: "R", 3: "A"}
-        grilla_letras = []
-        
-        for fila in grilla:
-            fila_letras = [letra_map.get(val, "?") for val in fila]
-            grilla_letras.append(fila_letras)
-        
-        # Mostrar grilla con letras
-        for i, fila in enumerate(grilla_letras):
-            fila_str = " ".join(fila)
-            print(f"Fila {i}: {fila_str}")
-        
-        # Estadísticas de ocupación
-        total_celdas = grilla.size
-        celdas_ocupadas = np.count_nonzero(grilla)
-        ocupacion = (celdas_ocupadas / total_celdas * 100) if total_celdas > 0 else 0
-        
-        print(f"\nOcupacion: {celdas_ocupadas}/{total_celdas} ({ocupacion:.1f}%)")
-        
-        # Mostrar grilla numérica original
-        print("\nGrilla numerica (para debugging):")
-        print(grilla)
-        print("="*50 + "\n")
-
-    # Se refactoriza 'imprimir_zona_juego' para recibir la imagen como np.ndarray
-    # y solo dibujar el rectángulo, eliminando la carga de imagen y el imshow/waitKey.
-    def _dibujar_zona_juego(self, imagen_vis: np.ndarray):
-        """
-        Dibuja el rectángulo de la zona de juego (self.game_area) en la imagen proporcionada.
-        """
-        # Obtener las coordenadas del área de juego
-        x_min = self.game_area['x_min']
-        y_min = self.game_area['y_min']
-        x_max = self.game_area['x_max']
-        y_max = self.game_area['y_max']
-
-        # Dibujar área de juego
+    def _render_results(self, image: np.ndarray, cookies: List[Cookie], info: Dict) -> np.ndarray:
+        result = image.copy()
+        area = self.game_area
         cv2.rectangle(
-            imagen_vis,
-            (x_min, y_min),
-            (x_max, y_max),
-            CONF["game_area_border"]["color"],
-            CONF["game_area_border"]["thickness"]
+            result,
+            (area["x_min"], area["y_min"]),
+            (area["x_max"], area["y_max"]),
+            self.config["game_area_border"]["color"],
+            self.config["game_area_border"]["thickness"],
+        )
+        excluded = set(info.get("cookies_excluidas_lista", []))
+        for cookie in cookies:
+            if cookie in excluded or cookie.row < 0:
+                cv2.circle(result, (cookie.x, cookie.y), 12, (0, 0, 255), 2)
+                continue
+            color = self.DRAW_COLORS[cookie.color]
+            cv2.circle(result, (cookie.x, cookie.y), 10, color, -1)
+            cv2.circle(result, (cookie.x, cookie.y), 12, (0, 0, 0), 2)
+            cv2.putText(
+                result,
+                f"{cookie.row},{cookie.col}:{cookie.color[0]}",
+                (cookie.x - 24, cookie.y - 17),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.38,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+        return result
+
+    @staticmethod
+    def _print_summary(path: str, grid: np.ndarray, info: Dict) -> None:
+        letters = {0: ".", 1: "V", 2: "R", 3: "A", 4: "C", 5: "Y"}
+        print(f"\n{Path(path).name}: {grid.shape[0]}x{grid.shape[1]}")
+        for row in grid:
+            print(" ".join(letters[int(value)] for value in row))
+        print(
+            f"Ocupacion: {np.count_nonzero(grid)}/{grid.size}; "
+            f"excluidas: {info['cookies_excluidas']}; componentes: {info['componentes']}\n"
         )
 
     def return_array_of_images_from_folder(self) -> List[str]:
-        """Retorna una lista de rutas de imágenes desde una carpeta dada."""
-        imagenes = []
-        for archivo in os.listdir(CONF["images_path"]):
-            if archivo.lower().endswith(('.png', '.jpg', '.jpeg')):
-                imagenes.append(os.path.join(CONF["images_path"], archivo))
-        return imagenes 
+        extensions = {".png", ".jpg", ".jpeg"}
+        return sorted(
+            str(path)
+            for path in Path(self.images_path).iterdir()
+            if path.suffix.lower() in extensions
+        )
 
-def main():
-    """Función principal."""
-    print("Sistema Mejorado de Deteccion Yoshi's Cookie")
-    print("="*50 + "\n")
-    
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Detector de tableros de Yoshi's Cookie")
+    parser.add_argument("images", nargs="*", help="Imágenes; por defecto procesa imgs/")
+    parser.add_argument("--headless", action="store_true", help="No abrir ventanas OpenCV")
+    parser.add_argument("--output-dir", help="Guardar overlays de diagnóstico en este directorio")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
     detector = ImprovedCookieDetector(CONF)
+    images = args.images or detector.return_array_of_images_from_folder()
+    failures = 0
+    for image_path in images:
+        output_path = None
+        if args.output_dir:
+            output_path = str(Path(args.output_dir) / Path(image_path).name)
+        result = detector.procesar_imagen(
+            image_path,
+            visualize=not args.headless,
+            output_path=output_path,
+        )
+        failures += result is None
+    return 1 if failures else 0
 
-    #resultado = detector.procesar_imagen(CONF["images_path"] + '/001.png')
-    #imagenes = os.listdir(CONF["images_path"])
-    #imagenes = [img for img in imagenes if img.lower().endswith(('.png', '.jpg', '.jpeg'))]
-    imagenes = detector.return_array_of_images_from_folder()
-    for img_nombre in imagenes:
-        print(f"\nProcesando imagen: {img_nombre}")
-        resultado = detector.procesar_imagen(img_nombre)
-    #if resultado:
-    #    print("\n[OK] Procesamiento completado exitosamente")
-    #    
-    #    # Opcionalmente, analizar movimientos
-    #    print("\n¿Deseas analizar movimientos optimos? (requiere movement_analyzer.py)")
 
-
-if __name__ == '__main__':
-    main()
-
-    
+if __name__ == "__main__":
+    raise SystemExit(main())

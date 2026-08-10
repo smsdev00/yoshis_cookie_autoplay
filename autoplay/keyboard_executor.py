@@ -3,10 +3,17 @@ Módulo para ejecutar movimientos físicos en el juego usando teclado/mouse.
 Traduce las posiciones de la grilla a comandos del teclado.
 """
 
-import pyautogui
 import time
 from typing import Tuple
 from enum import Enum
+
+
+def _get_pyautogui():
+    import pyautogui
+
+    pyautogui.PAUSE = 0.1
+    pyautogui.FAILSAFE = True
+    return pyautogui
 
 
 class InputMethod(Enum):
@@ -46,6 +53,7 @@ class KeyboardExecutor:
             target_row: Fila objetivo (0-indexed)
             target_col: Columna objetivo (0-indexed)
         """
+        pyautogui = _get_pyautogui()
         current_row, current_col = self.cursor_position
         
         # Calcular movimientos necesarios
@@ -84,6 +92,7 @@ class KeyboardExecutor:
 
     def select_cookie(self):
         """Selecciona la cookie en la posición actual del cursor."""
+        pyautogui = _get_pyautogui()
         print(f"[KeyboardExecutor] Seleccionando cookie en {self.cursor_position}")
         pyautogui.press('space')  # o 'enter' según el juego
         time.sleep(self.action_delay)
@@ -124,6 +133,7 @@ class KeyboardExecutor:
             pos: (fila, columna) posición base
             direction: 'up', 'down', 'left', 'right'
         """
+        pyautogui = _get_pyautogui()
         print(f"[KeyboardExecutor] Swap direccional desde {pos} hacia {direction}")
         
         # Mover a la posición
@@ -203,6 +213,7 @@ class MouseExecutor:
 
     def click_position(self, row: int, col: int):
         """Hace click en una posición de la grilla."""
+        pyautogui = _get_pyautogui()
         x, y = self.grid_to_screen_coords(row, col)
         print(f"[MouseExecutor] Click en grilla ({row},{col}) -> pantalla ({x},{y})")
         pyautogui.click(x, y)

@@ -12,8 +12,8 @@ from datetime import datetime
 
 # Importar módulos propios
 from config import CONF
-from game_controller import GameController
-from yoshi_cookie_detector import ImprovedCookieDetector
+from autoplay.game_controller import GameController
+from main import ImprovedCookieDetector
 from movement_analyzer import CookieMovementAnalyzer
 
 
@@ -51,7 +51,7 @@ class AutoPlayer:
 
     def setup_game_window(self):
         """Configuración interactiva de la ventana del juego."""
-        from game_controller import GameWindowFinder
+        from autoplay.game_controller import GameWindowFinder
         
         print("\n" + "="*50)
         print("CONFIGURACION INICIAL")
@@ -87,7 +87,9 @@ class AutoPlayer:
             screenshot = self.controller.capture_screenshot(save=False)
             
             # Guardar temporalmente para procesamiento
-            temp_path = Path("./temp_screenshot.jpg")
+            # PNG conserva los colores exactos del pixel-art; JPEG introduce
+            # artefactos que degradan la clasificación HSV.
+            temp_path = Path("./temp_screenshot.png")
             cv2.imwrite(str(temp_path), screenshot)
             
             # Detectar cookies
@@ -147,7 +149,7 @@ class AutoPlayer:
         print("\n" + "="*50)
         print(f"[AutoPlayer] EJECUTANDO MOVIMIENTO #{self.stats['moves_executed'] + 1}")
         print("="*50)
-        print(best_move.explanation)
+        print(f"{best_move.pos1} -> {best_move.pos2} ({best_move.type})")
         print(f"Score esperado: {best_move.score:.1f}")
         print("="*50)
         
@@ -155,15 +157,14 @@ class AutoPlayer:
         self.controller.execute_move({
             'pos1': best_move.pos1,
             'pos2': best_move.pos2,
-            'type': best_move.move_type.value,
+            'type': best_move.type,
             'score': best_move.score
         })
         
         # Actualizar estadísticas
         self.stats['moves_executed'] += 1
         self.stats['total_score'] += best_move.score
-        if best_move.matches_created:
-            self.stats['matches_created'] += len(best_move.matches_created)
+        self.stats['matches_created'] += best_move.details.get('immediate_matches', 0)
 
     def play_one_move(self) -> bool:
         """

@@ -3,13 +3,21 @@ Controlador principal del juego Yoshi's Cookie.
 Captura pantalla, detecta cookies, calcula mejor movimiento y ejecuta acciones.
 """
 
-import pyautogui
 import numpy as np
 import cv2
 import time
 from typing import Dict, Tuple, Optional
 from pathlib import Path
 from datetime import datetime
+
+
+def _get_pyautogui():
+    """Importación diferida: importar el módulo no debe requerir un display X."""
+    import pyautogui
+
+    pyautogui.PAUSE = 0.1
+    pyautogui.FAILSAFE = True
+    return pyautogui
 
 
 class GameController:
@@ -25,13 +33,10 @@ class GameController:
         self.screenshots_dir = Path("./screenshots")
         self.screenshots_dir.mkdir(exist_ok=True)
         
-        # Configuración de pyautogui
-        pyautogui.PAUSE = 0.1  # Pausa entre comandos
-        pyautogui.FAILSAFE = True  # Mover mouse a esquina superior izquierda para detener
-        
         # Estado del juego
         self.current_screenshot = None
         self.move_history = []
+        self.move_executor = None
         
         print("[GameController] Inicializado")
         print(f"[INFO] Failsafe activado: mueve el mouse a la esquina superior izquierda para detener")
@@ -57,7 +62,7 @@ class GameController:
         x, y, width, height = self.game_window_region
         
         # Capturar con pyautogui (devuelve PIL Image)
-        screenshot = pyautogui.screenshot(region=(x, y, width, height))
+        screenshot = _get_pyautogui().screenshot(region=(x, y, width, height))
         
         # Convertir PIL a numpy array (RGB)
         img_rgb = np.array(screenshot)
@@ -87,13 +92,24 @@ class GameController:
             print("[GameController] No hay movimiento para ejecutar")
             return
         
-        # Por ahora, solo logueamos el movimiento
-        # En la siguiente iteración implementaremos la ejecución real
         print(f"[GameController] Movimiento a ejecutar: {move}")
+        if self.move_executor is not None:
+            self.move_executor.execute_move(move["pos1"], move["pos2"], move.get("type"))
         self.move_history.append({
             'timestamp': datetime.now(),
             'move': move
         })
+
+    def setup_move_executor(self, method: str = "keyboard", **kwargs):
+        """Configura el backend de entrada sin cargar PyAutoGUI prematuramente."""
+        from autoplay.keyboard_executor import MoveExecutor
+
+        if method == "mouse" and "game_area_coords" not in kwargs:
+            if self.game_window_region is None:
+                raise ValueError("Debes configurar game_window_region antes del mouse")
+            kwargs["game_area_coords"] = self.game_window_region
+        self.move_executor = MoveExecutor(method=method, **kwargs)
+        return self.move_executor
 
     def wait_for_animation(self, duration: float = 1.0):
         """Espera a que termine la animación del juego."""
@@ -127,6 +143,7 @@ class GameWindowFinder:
         Modo interactivo para encontrar la ventana del juego.
         El usuario debe hacer clic en dos esquinas.
         """
+        pyautogui = _get_pyautogui()
         print("\n" + "="*50)
         print("CONFIGURACION DE VENTANA DEL JUEGO")
         print("="*50)
@@ -167,6 +184,7 @@ class GameWindowFinder:
     @staticmethod
     def get_current_mouse_position():
         """Obtiene la posición actual del mouse (útil para debugging)."""
+        pyautogui = _get_pyautogui()
         x, y = pyautogui.position()
         print(f"[INFO] Posicion del mouse: ({x}, {y})")
         return (x, y)
@@ -174,6 +192,7 @@ class GameWindowFinder:
     @staticmethod
     def show_screen_info():
         """Muestra información de la pantalla."""
+        pyautogui = _get_pyautogui()
         screen_width, screen_height = pyautogui.size()
         print(f"[INFO] Resolucion de pantalla: {screen_width}x{screen_height}")
         return (screen_width, screen_height)

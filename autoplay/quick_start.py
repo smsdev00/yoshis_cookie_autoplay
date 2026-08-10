@@ -34,12 +34,6 @@ def check_dependencies():
         missing.append("numpy")
     
     try:
-        import sklearn
-        print("  [OK] scikit-learn instalado")
-    except ImportError:
-        missing.append("scikit-learn")
-    
-    try:
         import pyautogui
         print("  [OK] PyAutoGUI instalado")
     except ImportError:
@@ -62,11 +56,11 @@ def check_files():
     
     required_files = [
         'config.py',
-        'yoshi_cookie_detector.py',
+        'main.py',
         'movement_analyzer.py',
-        'game_controller.py',
-        'keyboard_executor.py',
-        'auto_player.py'
+        'autoplay/game_controller.py',
+        'autoplay/keyboard_executor.py',
+        'autoplay/auto_player.py'
     ]
     
     missing = []
@@ -122,7 +116,7 @@ def run_detection_test():
     print("TEST DE DETECCION")
     print("="*60 + "\n")
     
-    from yoshi_cookie_detector import ImprovedCookieDetector
+    from main import ImprovedCookieDetector
     from config import CONF
     
     # Buscar imagen de prueba
@@ -171,7 +165,7 @@ def run_window_setup():
     
     input("\nPresiona ENTER...")
     
-    from game_controller import GameController, GameWindowFinder
+    from autoplay.game_controller import GameController, GameWindowFinder
     
     controller = GameController()
     region = GameWindowFinder.find_window_interactive()
@@ -224,7 +218,7 @@ def run_single_move():
     
     print(f"[INFO] Usando configuracion guardada: x={x}, y={y}, w={w}, h={h}")
     
-    from auto_player import AutoPlayer
+    from autoplay.auto_player import AutoPlayer
     
     player = AutoPlayer(game_region=(x, y, w, h))
     
@@ -283,7 +277,7 @@ def run_full_session():
     with open(config_file, 'r') as f:
         x, y, w, h = map(int, f.read().strip().split(','))
     
-    from auto_player import AutoPlayer
+    from autoplay.auto_player import AutoPlayer
     
     player = AutoPlayer(game_region=(x, y, w, h))
     
@@ -351,7 +345,7 @@ def run_color_calibration():
     
     try:
         import detect_color
-        detect_color.hsv_color_selector()
+        detect_color.run_color_detector()
     except Exception as e:
         print(f"[ERROR] Error en calibracion: {e}")
     
