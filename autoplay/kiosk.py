@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from autoplay.adapters import PersistentUInputBackend
 from autoplay.bsnes import (
@@ -22,8 +23,10 @@ from autoplay.bsnes import (
     BsnesProcess,
     BsnesScreenStateError,
     BsnesScreenshotSource,
+    BsnesUnknownCookieError,
 )
-from autoplay.orchestrator import AutoPlayLoop, CycleConfig
+from autoplay.domain import CookieType
+from autoplay.orchestrator import AutoPlayLoop, CycleConfig, PostMoveVerificationError
 from autoplay.solver import Solver
 
 
@@ -52,6 +55,13 @@ class KioskRunner:
                 failures = 0
                 print(f"#{moves} {before.board.shape} {move.direction.value} "
                       f"índice={move.axis_index} score={move.score:.0f}", flush=True)
+            except BsnesUnknownCookieError as exc:
+                print(f"[ERROR] {exc}; kiosco detenido sin mover", flush=True)
+                self.running = False
+            except PostMoveVerificationError as exc:
+                print(f"[ERROR] {exc}; kiosco detenido para evitar desincronización",
+                      flush=True)
+                self.running = False
             except (TimeoutError, RuntimeError, ValueError) as exc:
                 failures += 1
                 print(f"[WARN] observación #{failures} falló: {exc}", flush=True)
@@ -141,21 +151,32 @@ def main(argv=None) -> int:
             min_confidence=0.98,
             require_cursor=True,
         )
-        last_stage_start = 0.0
+        stage_start_handled = False
 
         def observe_board():
-            nonlocal last_stage_start
+            nonlocal stage_start_handled
+            image = source.capture()
             try:
-                return detector.detect(source.capture())
+                observation = detector.detect(image)
             except BsnesScreenStateError as exc:
-                now = time.monotonic()
                 if (args.mode == "kiosk" and exc.state == "stage_start" and
-                        now - last_stage_start >= 5.0):
+                        not stage_start_handled):
                     print("[INFO] Stage Start detectado; enviando Keypad8", flush=True)
                     controller.tap("start")
-                    last_stage_start = now
+                    stage_start_handled = True
                     time.sleep(3.0)
                 raise
+            stage_start_handled = False
+            unknown = np.argwhere(observation.board == CookieType.UNKNOWN)
+            if unknown.size:
+                positions = [tuple(int(value) for value in item) for item in unknown]
+                diagnostic_dir = Path("runtime/unknown-cookies")
+                diagnostic_dir.mkdir(parents=True, exist_ok=True)
+                diagnostic = diagnostic_dir / f"frame-{time.time_ns()}.png"
+                if not cv2.imwrite(str(diagnostic), image):
+                    raise RuntimeError(f"No se pudo guardar diagnóstico: {diagnostic}")
+                raise BsnesUnknownCookieError(positions, diagnostic)
+            return observation
 
         loop = AutoPlayLoop(observe_board, executor=controller, config=config)
 

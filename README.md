@@ -121,6 +121,8 @@ cinco observaciones fallidas. No borra los BMP de `Downloads`.
 
 El detector ignora las filas que todavía caen desde arriba y las columnas que
 entran por la derecha; sólo toma el rectángulo compacto inferior izquierdo.
+Si aparece una cookie que aún no sabe clasificar, el kiosco se detiene antes de
+mover y guarda el framebuffer en `runtime/unknown-cookies/` para diagnosticarla.
 
 ## Limitaciones actuales
 

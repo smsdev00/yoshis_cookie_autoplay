@@ -45,6 +45,15 @@ class BsnesScreenStateError(ValueError):
         super().__init__(f"Pantalla de bsnes detectada: {state}")
 
 
+class BsnesUnknownCookieError(Exception):
+    def __init__(self, positions, diagnostic: Path):
+        self.positions = tuple(positions)
+        self.diagnostic = diagnostic
+        super().__init__(
+            f"Cookies desconocidas en {self.positions}; diagnóstico={diagnostic}"
+        )
+
+
 class BsnesScreenshotSource:
     """Pide un screenshot con F12 y espera el BMP nuevo y completo."""
 
@@ -178,6 +187,27 @@ class BsnesNativeDetector:
 
     @staticmethod
     def _classify(image: np.ndarray, x: int, y: int) -> int:
+        patch = image[y - 7:y + 8, x - 7:x + 8]
+        blue_patch, green_patch, red_patch = cv2.split(patch)
+        dark_red = int(np.count_nonzero((red_patch > 140) & (green_patch < 30)))
+        orange = int(np.count_nonzero(
+            (red_patch > 220) & (green_patch >= 30) & (green_patch < 130)
+        ))
+        core = patch[2:13, 2:13]
+        core_black = int(np.count_nonzero(np.all(core < 40, axis=2)))
+        lime = int(np.count_nonzero(
+            (green_patch > 220) & (red_patch > 180) & (blue_patch < 130)
+        ))
+        if core_black >= 20 and lime >= 15:
+            return CookieType.YOSHI
+        # El símbolo ajedrezado alterna su orientación según la celda, por lo
+        # que su píxel central no es estable. Ambas fases conservan esta firma.
+        if 8 <= dark_red <= 35 and orange < 15:
+            return CookieType.CHECKER
+        if dark_red >= 40:
+            return CookieType.HEART
+        if orange >= 15:
+            return CookieType.FLOWER
         blue, green, red = (int(value) for value in image[y, x])
         if green > 220 and red < 80:
             return CookieType.DIAMOND
@@ -187,6 +217,8 @@ class BsnesNativeDetector:
             return CookieType.FLOWER
         if red > 180 and green > 180 and blue < 80:
             return CookieType.CHECKER
+        if 180 <= red <= 230 and 90 <= green <= 170 and blue < 60:
+            return CookieType.CIRCLE
         # Nunca adivinar Yoshi: un tipo desconocido debe impedir la ejecución.
         return CookieType.UNKNOWN
 
@@ -194,13 +226,23 @@ class BsnesNativeDetector:
     def _has_cursor(image: np.ndarray, x: int, y: int) -> bool:
         core = image[y - 3:y + 4, x - 3:x + 4]
         white = np.all(core > 240, axis=2)
-        return int(np.count_nonzero(white)) >= 4
+        if int(np.count_nonzero(white)) >= 4:
+            return True
+        patch = image[y - 7:y + 8, x - 7:x + 8]
+        blue, green, red = cv2.split(patch)
+        core_black = int(np.count_nonzero(np.all(patch[2:13, 2:13] < 40, axis=2)))
+        lime = int(np.count_nonzero((green > 220) & (red > 180) & (blue < 130)))
+        return core_black >= 20 and 8 <= lime < 18
 
     @staticmethod
     def _classify_occluded(image: np.ndarray, x: int, y: int) -> int:
         """Clasifica el símbolo que sobrevive alrededor de la mira del cursor."""
         patch = image[y - 7:y + 8, x - 7:x + 8]
         blue, green, red = cv2.split(patch)
+        core_black = int(np.count_nonzero(np.all(patch[2:13, 2:13] < 40, axis=2)))
+        lime = int(np.count_nonzero((green > 220) & (red > 180) & (blue < 130)))
+        if core_black >= 10 and lime >= 20:
+            return CookieType.YOSHI
         counts = {
             CookieType.DIAMOND: np.count_nonzero((green > 220) & (red < 80)),
             CookieType.HEART: np.count_nonzero((red > 140) & (green < 30)),
@@ -209,7 +251,7 @@ class BsnesNativeDetector:
             ),
         }
         cookie_type, pixels = max(counts.items(), key=lambda item: item[1])
-        return cookie_type if pixels >= 3 else CookieType.UNKNOWN
+        return cookie_type if pixels >= 2 else CookieType.UNKNOWN
 
 
 @dataclass

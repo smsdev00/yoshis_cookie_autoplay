@@ -11,8 +11,11 @@ from unittest.mock import Mock, patch
 
 from autoplay.adapters import PersistentUInputBackend, YdotoolInputBackend
 from autoplay.bsnes import (BSNES_KEYS, BsnesController, BsnesNativeDetector,
-                            BsnesScreenStateError, BsnesScreenshotSource)
+                            BsnesScreenStateError, BsnesScreenshotSource,
+                            BsnesUnknownCookieError)
 from autoplay.domain import Direction, Move
+from autoplay.kiosk import KioskRunner
+from autoplay.orchestrator import PostMoveVerificationError
 
 
 class FakeInput:
@@ -95,6 +98,64 @@ class BsnesDetectorTests(unittest.TestCase):
         self.assertEqual(observation.cursor, (0, 1))
         self.assertEqual(observation.board[0, 1], 3)
 
+    def test_detects_dark_cursor_blink_phase_over_heart(self):
+        expected = np.full((2, 2), 2, dtype=np.int8)
+        frame = cookie_frame(expected)
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT + detector.CELL, detector.BOTTOM
+        frame[y - 4:y + 5, x - 4:x + 5] = (20, 20, 20)
+        lime_points = [(dx, dy) for dy in range(-3, 4) for dx in range(-3, 4)][:14]
+        for dx, dy in lime_points:
+            frame[y + dy, x + dx] = (90, 255, 255)
+        for dx, dy in ((-5, 0), (5, 0), (0, -5), (0, 5)):
+            frame[y + dy, x + dx] = (0, 0, 198)
+        observation = detector.detect(frame)
+        self.assertEqual(observation.cursor, (1, 1))
+        self.assertEqual(observation.board[1, 1], 2)
+
+    def test_checker_is_classified_in_both_sprite_orientations(self):
+        expected = np.full((2, 2), 4, dtype=np.int8)
+        frame = cookie_frame(expected)
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT, detector.BOTTOM - detector.CELL
+        frame[y, x] = (165, 255, 255)
+        points = [(dx, dy) for dy in range(-5, 6) for dx in range(-5, 6)][:20]
+        for dx, dy in points:
+            frame[y + dy, x + dx] = (0, 0, 255)
+        observation = detector.detect(frame)
+        np.testing.assert_array_equal(observation.board, expected)
+
+    def test_yoshi_cookie_has_a_distinct_dark_and_lime_symbol(self):
+        frame = cookie_frame(np.full((2, 2), 3, dtype=np.int8))
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT + detector.CELL, detector.BOTTOM
+        frame[y - 5:y + 6, x - 5:x + 6] = (20, 20, 20)
+        lime_points = [(dx, dy) for dy in range(-4, 5) for dx in range(-4, 5)][:22]
+        for dx, dy in lime_points:
+            frame[y + dy, x + dx] = (90, 255, 255)
+        observation = detector.detect(frame)
+        self.assertEqual(observation.board[1, 1], 6)
+        self.assertEqual(observation.confidence, 1.0)
+
+    def test_flower_is_classified_when_its_center_is_yellow(self):
+        frame = cookie_frame(np.full((2, 2), 3, dtype=np.int8))
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT + detector.CELL, detector.BOTTOM
+        frame[y, x] = (165, 255, 255)
+        orange_points = [(dx, dy) for dy in range(-5, 6) for dx in range(-5, 6)][:15]
+        for dx, dy in orange_points:
+            frame[y + dy, x + dx] = (0, 66, 255)
+        observation = detector.detect(frame)
+        self.assertEqual(observation.board[1, 1], 3)
+
+    def test_plain_brown_cookie_is_circle(self):
+        frame = cookie_frame(np.full((2, 2), 3, dtype=np.int8))
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT + detector.CELL, detector.BOTTOM
+        frame[y, x] = (16, 132, 206)
+        observation = detector.detect(frame)
+        self.assertEqual(observation.board[1, 1], 5)
+
     def test_screenshot_source_waits_for_new_complete_bmp(self):
         with TemporaryDirectory() as directory:
             target = Path(directory) / "Yoshi's Cookie (USA)-001.bmp"
@@ -166,6 +227,30 @@ class PersistentUInputTests(unittest.TestCase):
              (BSNES_KEYS["left"], 1), (BSNES_KEYS["left"], 0),
              (BSNES_KEYS["left"], 1), (BSNES_KEYS["left"], 0)],
         )
+
+
+class KioskRunnerTests(unittest.TestCase):
+    def test_unknown_cookie_stops_without_recovery(self):
+        class Loop:
+            def step(self, execute):
+                raise BsnesUnknownCookieError([(1, 2)], Path("runtime/example.png"))
+
+        controller = FakeInput()
+        runner = KioskRunner(Loop(), controller, Path("/tmp/nonexistent-yca-stop"))
+        self.assertEqual(runner.run(max_moves=5), 0)
+        self.assertFalse(runner.running)
+        self.assertEqual(controller.buttons, [])
+
+    def test_post_move_verification_error_is_fatal(self):
+        class Loop:
+            def step(self, execute):
+                raise PostMoveVerificationError("resultado ambiguo")
+
+        controller = FakeInput()
+        runner = KioskRunner(Loop(), controller, Path("/tmp/nonexistent-yca-stop"))
+        self.assertEqual(runner.run(max_moves=5), 0)
+        self.assertFalse(runner.running)
+        self.assertEqual(controller.buttons, [])
 
 
 if __name__ == "__main__":

@@ -163,7 +163,7 @@ El modo bsnes ahora usa `PersistentUInputBackend`, basado en `python-evdev`:
 - mantiene ydotool sólo para el pipeline histórico.
 
 `evdev 1.9.3` está instalado en `venv` y forma parte de `requirements.txt`. Las
-30 pruebas automatizadas pasan.
+37 pruebas automatizadas pasan.
 
 La validación física confirmó que el mismo dispositivo persistente envía F11,
 Start y F12 de forma repetida a bsnes: se generaron los BMP `004` a `047`. Tras
@@ -180,11 +180,19 @@ Se validó un `single-step` completo y un loop limitado a cinco movimientos. Los
 cinco fueron verificados y el bot atravesó automáticamente dos pantallas
 `STAGE START`, enviando un solo Keypad8 en cada transición.
 
+Las pruebas extendidas produjeron diagnósticos reales de todas las variantes
+encontradas. El detector distingue los cinco tipos normales, Yoshi como comodín,
+las fases clara/oscura del cursor y cookies ocluidas. Ante cualquier apariencia
+desconocida guarda el framebuffer en `runtime/unknown-cookies/` y se detiene.
+Los fallos posteriores a enviar un movimiento también son fatales para evitar
+continuar desincronizado. Se alcanzaron 16 movimientos en una corrida de
+depuración, aunque esa ejecución reveló fallos intermedios y no cuenta como una
+validación limpia de 20 movimientos.
+
 ## Próximo paso recomendado
 
-Continuar con la clasificación inequívoca de los cinco tipos normales y la
-cookie Yoshi. Después hay que validar Game Over y una ejecución limitada más
-larga antes de habilitar el loop infinito.
+Repetir una ejecución limpia limitada a 20 movimientos y después validar Game
+Over/título antes de habilitar el loop infinito.
 
 Preparación temporal de `/dev/uinput` usada durante la depuración:
 
@@ -211,16 +219,15 @@ Completado:
 
 Pendiente:
 
-1. Validar todos los tipos normales y Yoshi.
+1. Ejecutar una prueba limpia limitada a 20 movimientos.
 2. Probar Game Over/título sin recuperación ciega.
-3. Ejecutar una prueba limitada más larga.
-4. Sólo entonces ejecutar `./run-bsnes-kiosk.sh` sin límite.
+3. Sólo entonces ejecutar `./run-bsnes-kiosk.sh` sin límite.
 
 ## Riesgos y trabajo todavía pendiente
 
 - Ajustar el cursor cuando desaparece la fila/columna donde se encontraba.
-- Validar los cinco tipos normales y la cookie Yoshi. Las muestras actuales
-  sólo contienen cuatro apariencias claramente observadas.
+- Ampliar regresiones con nuevas fases visuales si aparecen; los cinco tipos
+  normales y Yoshi ya fueron observados y clasificados.
 - Mejorar el solver con simulación posterior a la eliminación y lookahead.
 - Diferenciar visualmente Game Over, título y pausa. La transición normal de
   stage ya se reconoce; la recuperación restante se basa en fallos consecutivos.

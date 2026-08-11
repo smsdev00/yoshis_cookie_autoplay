@@ -12,12 +12,17 @@ from autoplay.domain import Move, apply_move
 from autoplay.solver import Solver
 
 
+class PostMoveVerificationError(RuntimeError):
+    """El juego recibió un movimiento pero su resultado no pudo validarse."""
+
+
 @dataclass
 class CycleConfig:
     poll_interval: float = 0.25
     stable_frames: int = 3
     animation_delay: float = 0.8
     stability_timeout: float = 3.0
+    clear_stability_timeout: float = 40.0
     min_confidence: float = 0.98
     require_cursor: bool = False
     cursor_settle_delay: float = 0.2
@@ -39,8 +44,10 @@ class AutoPlayLoop:
         self.config = config or CycleConfig()
         self.cursor: Tuple[int, int] = (0, 0)
 
-    def wait_for_stable_board(self) -> Observation:
-        deadline = time.monotonic() + self.config.stability_timeout
+    def wait_for_stable_board(self, timeout: Optional[float] = None) -> Observation:
+        deadline = time.monotonic() + (
+            self.config.stability_timeout if timeout is None else timeout
+        )
         previous = None
         consecutive = 0
         latest = None
@@ -92,13 +99,23 @@ class AutoPlayLoop:
         self.position_cursor((move.row, move.col), before.board.shape)
         self.cursor = self.executor.execute(move, self.cursor, before.board.shape)
         time.sleep(self.config.animation_delay)
-        after = self.wait_for_stable_board()
         expected = apply_move(before.board, move)
+        from autoplay.domain import completed_lines
+        clears_line = any(completed_lines(expected))
+        try:
+            after = self.wait_for_stable_board(
+                self.config.clear_stability_timeout if clears_line else None
+            )
+        except Exception as exc:
+            raise PostMoveVerificationError(
+                f"No se pudo observar el resultado del movimiento: {exc}"
+            ) from exc
         # La limpieza/entrada de cookies puede cambiar dimensiones o contenido.
         # Si no hubo línea inmediata, el desplazamiento sí debe coincidir exacto.
-        from autoplay.domain import completed_lines
-        if not any(completed_lines(expected)) and not np.array_equal(expected, after.board):
-            raise RuntimeError("La verificación falló: el tablero observado no coincide con el movimiento")
+        if not clears_line and not np.array_equal(expected, after.board):
+            raise PostMoveVerificationError(
+                "La verificación falló: el tablero observado no coincide con el movimiento"
+            )
         return before, move, after
 
     def position_cursor(self, target: Tuple[int, int],
