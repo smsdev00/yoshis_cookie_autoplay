@@ -1,13 +1,15 @@
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import cv2
 import numpy as np
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from autoplay.adapters import PersistentUInputBackend, YdotoolInputBackend
 from autoplay.bsnes import BSNES_KEYS, BsnesController, BsnesNativeDetector, BsnesScreenshotSource
 from autoplay.domain import Direction, Move
 
@@ -75,10 +77,44 @@ class BsnesDetectorTests(unittest.TestCase):
     def test_cursor_moves_with_shifted_cookie(self, run, _which):
         run.return_value.returncode = 0
         run.return_value.stderr = ""
-        controller = BsnesController(BSNES_KEYS)
-        controller.tap = lambda _button: None
+        backend = YdotoolInputBackend(BSNES_KEYS)
+        controller = BsnesController(backend)
+        backend.tap = lambda _button: None
         cursor = controller.execute(Move(0, 0, Direction.LEFT), (0, 0), (3, 4))
         self.assertEqual(cursor, (0, 3))
+
+
+class PersistentUInputTests(unittest.TestCase):
+    def _backend(self):
+        device = Mock()
+        ecodes = types.SimpleNamespace(EV_KEY=1)
+        module = types.SimpleNamespace(UInput=Mock(), ecodes=ecodes)
+        patcher = patch.dict("sys.modules", {"evdev": module})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        backend = PersistentUInputBackend(
+            BSNES_KEYS, registration_delay=0, key_delay=0, uinput=device
+        )
+        return backend, device
+
+    def test_reuses_device_and_emits_a_direction_chord_in_order(self):
+        backend, device = self._backend()
+        cursor = backend.execute(Move(0, 0, Direction.RIGHT), (0, 0), (3, 4))
+        self.assertEqual(cursor, (0, 1))
+        self.assertEqual(
+            [call.args for call in device.write.call_args_list],
+            [(1, BSNES_KEYS["a"], 1), (1, BSNES_KEYS["right"], 1),
+             (1, BSNES_KEYS["right"], 0), (1, BSNES_KEYS["a"], 0)],
+        )
+        self.assertEqual(device.syn.call_count, 4)
+
+    def test_context_manager_closes_device(self):
+        backend, device = self._backend()
+        with backend:
+            backend.tap("screenshot")
+        device.close.assert_called_once_with()
+        with self.assertRaisesRegex(Exception, "cerrado"):
+            backend.tap("screenshot")
 
 
 if __name__ == "__main__":

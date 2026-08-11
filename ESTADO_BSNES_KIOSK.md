@@ -1,6 +1,6 @@
 # Estado del modo bsnes/kiosco
 
-Última actualización: 10 de agosto de 2026.
+Última actualización: 11 de agosto de 2026.
 
 ## Objetivo final
 
@@ -147,35 +147,36 @@ El proceso bsnes de depuración ya no estaba activo al escribir este documento.
 `/dev/uinput` tampoco estaba presente, por lo que el módulo/ACL temporal deberá
 prepararse nuevamente.
 
-## Bloqueo actual
+## Entrada persistente implementada
 
 Debian 12 incluye `ydotool 0.1.8`, que crea un dispositivo uinput por cada
 invocación. KDE Plasma Wayland no alcanza a registrar ese teclado antes de que
 se emitan y terminen los eventos.
 
-El código actual además usa la sintaxis del ydotool moderno. No conviene seguir
-parchando esa versión vieja: necesitamos un dispositivo virtual persistente.
+El modo bsnes ahora usa `PersistentUInputBackend`, basado en `python-evdev`:
+
+- declara W/S/A/D, O, Keypad8, F11 y F12;
+- abre un único `evdev.UInput` durante toda la sesión;
+- espera un segundo para que Plasma registre el dispositivo;
+- conserva el orden A presionada, dirección, A liberada;
+- cierra el dispositivo al salir, incluso después de un error;
+- mantiene ydotool sólo para el pipeline histórico.
+
+`evdev 1.9.3` está instalado en `venv` y forma parte de `requirements.txt`. Las
+19 pruebas automatizadas pasan.
+
+La validación física confirmó que el mismo dispositivo persistente envía F11,
+Start y F12 de forma repetida a bsnes: se generaron los BMP `004` a `047`. Tras
+la espera visible de arranque, fullscreen y el primer Start funcionaron y se
+llegó al menú `ACTION / PUSH START`. `observe --launch` ya tolera frames de
+menú/transición. La temporización de la segunda pulsación Start sigue pendiente
+como parte de la secuencia de inicio, no del backend de entrada.
 
 ## Próximo paso recomendado
 
-Usar `python-evdev` dentro de `venv` y mantener un `evdev.UInput` abierto durante
-toda la sesión.
-
-La instalación fue iniciada pero cancelada. Actualmente `evdev` **no está
-instalado**. Reanudar con:
-
-```bash
-venv/bin/pip install evdev
-```
-
-Después:
-
-1. Crear `PersistentUInputBackend`.
-2. Declarar capacidades para W/S/A/D, O, Keypad8, F11 y F12.
-3. Abrir `/dev/uinput` una sola vez.
-4. Esperar aproximadamente un segundo para que Plasma registre el dispositivo.
-5. Reemplazar `BsnesController(YdotoolInputBackend)` por el backend persistente.
-6. Mantener el backend ydotool histórico sólo para otros entornos.
+Continuar con la clasificación inequívoca de los cinco tipos normales y la
+cookie Yoshi. Después habrá que calibrar la secuencia de Start para que
+`observe --launch` llegue automáticamente a un tablero jugable.
 
 Preparación temporal de `/dev/uinput` usada durante la depuración:
 
@@ -237,4 +238,3 @@ venv/bin/python -m unittest discover -v
 mkdir -p runtime
 touch runtime/STOP
 ```
-

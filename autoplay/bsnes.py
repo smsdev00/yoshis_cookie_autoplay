@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import subprocess
 import time
+from math import ceil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import cv2
 import numpy as np
 
-from autoplay.adapters import InputError, YdotoolInputBackend
+from autoplay.adapters import InputBackend
 from autoplay.orchestrator import Observation
 
 
@@ -40,7 +41,7 @@ class BsnesScreenshotError(RuntimeError):
 class BsnesScreenshotSource:
     """Pide un screenshot con F12 y espera el BMP nuevo y completo."""
 
-    def __init__(self, input_backend: YdotoolInputBackend,
+    def __init__(self, input_backend: InputBackend,
                  directory: Path = DEFAULT_SCREENSHOT_DIR,
                  pattern: str = DEFAULT_SCREENSHOT_GLOB,
                  timeout: float = 2.0, poll_interval: float = 0.02):
@@ -181,9 +182,28 @@ class BsnesProcess:
         return self.process is not None and self.process.poll() is None
 
 
-class BsnesController(YdotoolInputBackend):
-    def prepare(self, launch_delay: float = 2.0, startup_starts: int = 2) -> None:
-        time.sleep(launch_delay)
+class BsnesController:
+    """Controles de bsnes delegados a un backend de entrada intercambiable."""
+
+    def __init__(self, input_backend: InputBackend):
+        self.input = input_backend
+
+    def tap(self, button: str) -> None:
+        self.input.tap(button)
+
+    def execute(self, move, cursor, board_shape=None):
+        return self.input.execute(move, cursor, board_shape)
+
+    def prepare(self, launch_delay: float = 20.0, startup_starts: int = 2) -> None:
+        deadline = time.monotonic() + max(0.0, launch_delay)
+        while True:
+            remaining = max(0, ceil(deadline - time.monotonic()))
+            print(f"\r[INFO] esperando que la ROM acepte entrada: {remaining:2d}s",
+                  end="", flush=True)
+            if remaining == 0:
+                break
+            time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+        print(flush=True)
         self.tap("fullscreen")
         time.sleep(0.5)
         for _ in range(startup_starts):

@@ -43,8 +43,11 @@ pip install -r requirements.txt
 sudo apt install ydotool
 ```
 
-`ydotoold` debe estar activo y tener acceso a `/dev/uinput`. No ejecutes todo el
-bot como root. La ROM y bsnes permanecen fuera del repositorio.
+El modo bsnes usa `python-evdev` y mantiene un teclado virtual abierto durante
+toda la sesión para que Plasma Wayland pueda registrarlo. El usuario debe tener
+acceso de escritura limitado a `/dev/uinput`; no configures permisos globales.
+No ejecutes todo el bot como root. La ROM y bsnes permanecen fuera del
+repositorio. `ydotool` y `ydotoold` sólo se conservan para el pipeline histórico.
 
 ## Uso seguro por etapas
 
@@ -74,6 +77,10 @@ límite:
 ```bash
 venv/bin/python -m autoplay.kiosk kiosk --launch --yes-really-execute
 ```
+
+El lanzamiento muestra una cuenta regresiva de 20 segundos antes de enviar
+fullscreen y Start. Puede ajustarse con `--launch-delay` si la intro tarda más o
+menos en aceptar entrada.
 
 El lanzador equivalente intenta además inhibir suspensión/idle mediante
 `systemd-inhibit` mientras el proceso está activo:

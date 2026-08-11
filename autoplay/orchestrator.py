@@ -41,8 +41,16 @@ class AutoPlayLoop:
         previous = None
         consecutive = 0
         latest = None
+        last_error = None
         while time.monotonic() < deadline:
-            latest = self.observe()
+            try:
+                latest = self.observe()
+            except (RuntimeError, ValueError) as exc:
+                # Menús y animaciones producen temporalmente frames sin tablero.
+                last_error = exc
+                previous, consecutive = None, 0
+                time.sleep(self.config.poll_interval)
+                continue
             if latest.confidence < self.config.min_confidence:
                 previous, consecutive = None, 0
             elif previous is not None and np.array_equal(previous, latest.board):
@@ -52,7 +60,8 @@ class AutoPlayLoop:
             if consecutive >= self.config.stable_frames:
                 return latest
             time.sleep(self.config.poll_interval)
-        raise TimeoutError("El tablero no se estabilizó antes del timeout")
+        detail = f": {last_error}" if last_error else ""
+        raise TimeoutError(f"El tablero no se estabilizó antes del timeout{detail}")
 
     def propose(self) -> Tuple[Observation, Move]:
         observation = self.wait_for_stable_board()

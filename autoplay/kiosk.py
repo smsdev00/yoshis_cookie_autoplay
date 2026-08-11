@@ -10,6 +10,7 @@ from pathlib import Path
 
 import cv2
 
+from autoplay.adapters import PersistentUInputBackend
 from autoplay.bsnes import (
     BSNES_KEYS,
     DEFAULT_BSNES,
@@ -77,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pattern", default=DEFAULT_SCREENSHOT_GLOB)
     parser.add_argument("--image", type=Path, help="BMP existente para inspect")
     parser.add_argument("--launch", action="store_true", help="Iniciar bsnes, ROM y fullscreen")
+    parser.add_argument("--launch-delay", type=float, default=20.0,
+                        help="Espera antes de fullscreen/Start")
     parser.add_argument("--startup-starts", type=int, default=2)
     parser.add_argument("--max-moves", type=int, default=0, help="0 significa sin límite")
     parser.add_argument("--stop-file", type=Path, default=Path("runtime/STOP"))
@@ -108,40 +111,45 @@ def main(argv=None) -> int:
         print(f"propuesta={move.direction.value} índice={move.axis_index} score={move.score:.0f}")
         return 0
 
-    controller = BsnesController(BSNES_KEYS)
+    input_backend = PersistentUInputBackend(BSNES_KEYS)
+    controller = BsnesController(input_backend)
     process = BsnesProcess(args.bsnes, args.rom)
-    if args.launch:
-        process.launch()
-        controller.prepare(startup_starts=args.startup_starts)
-
-    source = BsnesScreenshotSource(controller, args.screenshots, args.pattern)
-    config = CycleConfig(
-        poll_interval=args.interval,
-        stable_frames=args.stable_frames,
-        animation_delay=args.animation_delay,
-        stability_timeout=args.timeout,
-        min_confidence=0.98,
-    )
-    loop = AutoPlayLoop(lambda: detector.detect(source.capture()), executor=controller, config=config)
-
-    if args.mode == "observe":
-        observation, move = loop.propose()
-        print(f"tablero={observation.board.tolist()}")
-        print(f"propuesta={move.direction.value} índice={move.axis_index} score={move.score:.0f}")
-        return 0
-    if args.mode == "single-step":
-        before, move, after = loop.step(execute=True)
-        print(f"antes={before.board.tolist()}")
-        print(f"movimiento={move.direction.value} índice={move.axis_index}")
-        print(f"después={after.board.tolist() if after else None}")
-        return 0
-
-    args.stop_file.parent.mkdir(parents=True, exist_ok=True)
-    runner = KioskRunner(loop, controller, args.stop_file)
-    signal.signal(signal.SIGINT, runner.stop)
-    signal.signal(signal.SIGTERM, runner.stop)
-    print(f"[INFO] kiosco activo; detén con Ctrl+C o creando {args.stop_file}", flush=True)
     try:
+        if args.launch:
+            process.launch()
+            controller.prepare(
+                launch_delay=args.launch_delay, startup_starts=args.startup_starts
+            )
+
+        source = BsnesScreenshotSource(controller, args.screenshots, args.pattern)
+        config = CycleConfig(
+            poll_interval=args.interval,
+            stable_frames=args.stable_frames,
+            animation_delay=args.animation_delay,
+            stability_timeout=args.timeout,
+            min_confidence=0.98,
+        )
+        loop = AutoPlayLoop(
+            lambda: detector.detect(source.capture()), executor=controller, config=config
+        )
+
+        if args.mode == "observe":
+            observation, move = loop.propose()
+            print(f"tablero={observation.board.tolist()}")
+            print(f"propuesta={move.direction.value} índice={move.axis_index} score={move.score:.0f}")
+            return 0
+        if args.mode == "single-step":
+            before, move, after = loop.step(execute=True)
+            print(f"antes={before.board.tolist()}")
+            print(f"movimiento={move.direction.value} índice={move.axis_index}")
+            print(f"después={after.board.tolist() if after else None}")
+            return 0
+
+        args.stop_file.parent.mkdir(parents=True, exist_ok=True)
+        runner = KioskRunner(loop, controller, args.stop_file)
+        signal.signal(signal.SIGINT, runner.stop)
+        signal.signal(signal.SIGTERM, runner.stop)
+        print(f"[INFO] kiosco activo; detén con Ctrl+C o creando {args.stop_file}", flush=True)
         runner.run(args.max_moves)
     finally:
         if args.launch and process.running():
@@ -150,6 +158,7 @@ def main(argv=None) -> int:
                 process.process.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 process.process.kill()
+        input_backend.close()
     return 0
 
 

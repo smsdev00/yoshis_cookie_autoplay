@@ -5,9 +5,10 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Tuple
+from typing import Mapping, Optional, Protocol, Tuple
 
 import cv2
 import numpy as np
@@ -23,6 +24,95 @@ class CaptureError(RuntimeError):
 
 class InputError(RuntimeError):
     pass
+
+
+class InputBackend(Protocol):
+    """Contrato mínimo para controlar bsnes sin acoplarlo a una herramienta."""
+
+    def tap(self, button: str) -> None:
+        ...
+
+    def execute(self, move: Move, cursor: Tuple[int, int],
+                board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
+        ...
+
+
+class PersistentUInputBackend:
+    """Teclado evdev persistente para que Wayland registre el dispositivo."""
+
+    def __init__(self, keycodes: Mapping[str, int], registration_delay: float = 1.0,
+                 key_delay: float = 0.03, device_name: str = "Yoshi Cookie AutoPlayer",
+                 uinput=None):
+        self.keycodes = dict(keycodes)
+        self.key_delay = key_delay
+        self._closed = False
+        try:
+            from evdev import UInput, ecodes
+        except ImportError as exc:
+            raise InputError(
+                "Falta python-evdev; instala las dependencias de requirements.txt"
+            ) from exc
+
+        self._ecodes = ecodes
+        try:
+            self._device = uinput or UInput(
+                {ecodes.EV_KEY: sorted(set(self.keycodes.values()))},
+                name=device_name,
+                version=0x3,
+            )
+        except (OSError, PermissionError) as exc:
+            raise InputError(
+                f"No se pudo abrir /dev/uinput: {exc}. "
+                "Carga uinput y concede acceso limitado al usuario."
+            ) from exc
+        if registration_delay > 0:
+            time.sleep(registration_delay)
+
+    def _emit(self, code: int, value: int) -> None:
+        if self._closed:
+            raise InputError("El dispositivo uinput ya está cerrado")
+        try:
+            self._device.write(self._ecodes.EV_KEY, code, value)
+            self._device.syn()
+        except OSError as exc:
+            raise InputError(f"Falló el envío por uinput: {exc}") from exc
+        if self.key_delay > 0:
+            time.sleep(self.key_delay)
+
+    def tap(self, button: str) -> None:
+        try:
+            code = self.keycodes[button]
+        except KeyError as exc:
+            raise InputError(f"Botón sin mapear: {button}") from exc
+        self._emit(code, 1)
+        self._emit(code, 0)
+
+    def execute(self, move: Move, cursor: Tuple[int, int],
+                board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
+        row, col = _move_cursor_to(self, cursor, (move.row, move.col))
+        try:
+            a = self.keycodes["a"]
+            direction = self.keycodes[move.direction.value]
+        except KeyError as exc:
+            raise InputError(f"Botón sin mapear: {exc.args[0]}") from exc
+        self._emit(a, 1)
+        try:
+            self._emit(direction, 1)
+            self._emit(direction, 0)
+        finally:
+            self._emit(a, 0)
+        return _shifted_cursor((row, col), move, board_shape)
+
+    def close(self) -> None:
+        if not self._closed:
+            self._device.close()
+            self._closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
 
 
 class WaylandFrameSource:
@@ -87,6 +177,37 @@ class WaylandFrameSource:
         return full[y:y + height, x:x + width].copy()
 
 
+def _move_cursor_to(backend, cursor: Tuple[int, int],
+                    target: Tuple[int, int]) -> Tuple[int, int]:
+    row, col = cursor
+    target_row, target_col = target
+    while row < target_row:
+        backend.tap("down"); row += 1
+    while row > target_row:
+        backend.tap("up"); row -= 1
+    while col < target_col:
+        backend.tap("right"); col += 1
+    while col > target_col:
+        backend.tap("left"); col -= 1
+    return row, col
+
+
+def _shifted_cursor(cursor: Tuple[int, int], move: Move,
+                    board_shape: Optional[Tuple[int, int]]) -> Tuple[int, int]:
+    row, col = cursor
+    if board_shape:
+        rows, cols = board_shape
+        if move.direction == Direction.LEFT:
+            col = (col - 1) % cols
+        elif move.direction == Direction.RIGHT:
+            col = (col + 1) % cols
+        elif move.direction == Direction.UP:
+            row = (row - 1) % rows
+        elif move.direction == Direction.DOWN:
+            row = (row + 1) % rows
+    return row, col
+
+
 @dataclass
 class YdotoolInputBackend:
     """Envía botones SNES mapeados a códigos evdev mediante ydotool."""
@@ -109,15 +230,7 @@ class YdotoolInputBackend:
 
     def execute(self, move: Move, cursor: Tuple[int, int],
                 board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
-        row, col = cursor
-        while row < move.row:
-            self.tap("down"); row += 1
-        while row > move.row:
-            self.tap("up"); row -= 1
-        while col < move.col:
-            self.tap("right"); col += 1
-        while col > move.col:
-            self.tap("left"); col -= 1
+        row, col = _move_cursor_to(self, cursor, (move.row, move.col))
 
         # El manual: mantener A y pulsar dirección. Un solo comando conserva
         # el orden press(A), tap(dirección), release(A).
@@ -130,14 +243,4 @@ class YdotoolInputBackend:
         if proc.returncode:
             raise InputError(proc.stderr.strip() or "ydotool falló ejecutando el movimiento")
         # El juego desplaza también la cookie seleccionada y el cursor.
-        if board_shape:
-            rows, cols = board_shape
-            if move.direction == Direction.LEFT:
-                col = (col - 1) % cols
-            elif move.direction == Direction.RIGHT:
-                col = (col + 1) % cols
-            elif move.direction == Direction.UP:
-                row = (row - 1) % rows
-            elif move.direction == Direction.DOWN:
-                row = (row + 1) % rows
-        return row, col
+        return _shifted_cursor((row, col), move, board_shape)

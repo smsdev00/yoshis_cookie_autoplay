@@ -29,6 +29,23 @@ class OrchestratorTests(unittest.TestCase):
                             config=CycleConfig(stable_frames=2, min_confidence=0.9))
         self.assertEqual(loop.wait_for_stable_board().confidence, 1.0)
 
+    @patch("autoplay.orchestrator.time.sleep", return_value=None)
+    def test_retries_frames_without_a_playable_board(self, _sleep):
+        board = np.array([[1, 2], [2, 1]])
+        observations = iter([
+            ValueError("Tablero no jugable o en animación: 0x0"),
+            Observation(board, 1.0), Observation(board, 1.0),
+        ])
+
+        def observe():
+            result = next(observations)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        loop = AutoPlayLoop(observe, config=CycleConfig(stable_frames=2))
+        np.testing.assert_array_equal(loop.wait_for_stable_board().board, board)
+
 
 if __name__ == "__main__":
     unittest.main()
