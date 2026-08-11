@@ -78,9 +78,12 @@ límite:
 venv/bin/python -m autoplay.kiosk kiosk --launch --yes-really-execute
 ```
 
-El lanzamiento muestra una cuenta regresiva de 20 segundos antes de enviar
-fullscreen y Start. Puede ajustarse con `--launch-delay` si la intro tarda más o
-menos en aceptar entrada.
+El lanzamiento muestra una cuenta regresiva de 20 segundos y activa fullscreen.
+Después espera 8 segundos y pulsa Keypad8, espera 10 segundos y vuelve a pulsarlo
+para llegar a `STAGE START — PUSH START`, espera otros 10 segundos y pulsa
+Keypad8 por tercera vez para comenzar. Los tiempos pueden ajustarse con
+`--launch-delay`, `--select-stage-delay`, `--level-start-delay` y
+`--gameplay-start-delay`.
 
 El lanzador equivalente intenta además inhibir suspensión/idle mediante
 `systemd-inhibit` mientras el proceso está activo:

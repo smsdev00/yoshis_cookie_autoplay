@@ -33,7 +33,7 @@ def cookie_frame(values):
         2: (0, 0, 198),
         3: (0, 66, 255),
         4: (0, 255, 255),
-        5: (255, 0, 255),
+        5: (255, 100, 100),
     }
     height, width = values.shape
     top = detector.BOTTOM - (height - 1) * detector.CELL
@@ -47,6 +47,15 @@ def cookie_frame(values):
 
 
 class BsnesDetectorTests(unittest.TestCase):
+    @patch("autoplay.bsnes.time.sleep", return_value=None)
+    def test_prepare_uses_the_verified_startup_sequence(self, _sleep):
+        backend = FakeInput()
+        BsnesController(backend).prepare(
+            launch_delay=0, select_stage_delay=0, level_start_delay=0,
+            gameplay_start_delay=0,
+        )
+        self.assertEqual(backend.buttons, ["fullscreen", "start", "start", "start"])
+
     def test_native_frame_to_board(self):
         expected = np.array([[3, 4, 3], [1, 3, 1], [2, 1, 2]], dtype=np.int8)
         observation = BsnesNativeDetector().detect(cookie_frame(expected))
@@ -55,6 +64,12 @@ class BsnesDetectorTests(unittest.TestCase):
     def test_rejects_wrong_resolution(self):
         with self.assertRaisesRegex(ValueError, "256x224"):
             BsnesNativeDetector().detect(np.zeros((100, 100, 3), dtype=np.uint8))
+
+    def test_unknown_cookie_is_not_treated_as_yoshi(self):
+        unknown = np.full((2, 2), 5, dtype=np.int8)
+        observation = BsnesNativeDetector().detect(cookie_frame(unknown))
+        np.testing.assert_array_equal(observation.board, np.zeros((2, 2), dtype=np.int8))
+        self.assertEqual(observation.confidence, 0.0)
 
     def test_screenshot_source_waits_for_new_complete_bmp(self):
         with TemporaryDirectory() as directory:

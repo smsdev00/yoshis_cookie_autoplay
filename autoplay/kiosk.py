@@ -80,7 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--launch", action="store_true", help="Iniciar bsnes, ROM y fullscreen")
     parser.add_argument("--launch-delay", type=float, default=20.0,
                         help="Espera antes de fullscreen/Start")
-    parser.add_argument("--startup-starts", type=int, default=2)
+    parser.add_argument("--select-stage-delay", type=float, default=8.0,
+                        help="Espera desde fullscreen hasta Select Stage")
+    parser.add_argument("--level-start-delay", type=float, default=10.0,
+                        help="Espera desde Select Stage hasta Start Level")
+    parser.add_argument("--gameplay-start-delay", type=float, default=10.0,
+                        help="Espera hasta confirmar PUSH START")
     parser.add_argument("--max-moves", type=int, default=0, help="0 significa sin límite")
     parser.add_argument("--stop-file", type=Path, default=Path("runtime/STOP"))
     parser.add_argument("--interval", type=float, default=0.25)
@@ -118,7 +123,10 @@ def main(argv=None) -> int:
         if args.launch:
             process.launch()
             controller.prepare(
-                launch_delay=args.launch_delay, startup_starts=args.startup_starts
+                launch_delay=args.launch_delay,
+                select_stage_delay=args.select_stage_delay,
+                level_start_delay=args.level_start_delay,
+                gameplay_start_delay=args.gameplay_start_delay,
             )
 
         source = BsnesScreenshotSource(controller, args.screenshots, args.pattern)

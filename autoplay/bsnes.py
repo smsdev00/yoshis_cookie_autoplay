@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from autoplay.adapters import InputBackend
+from autoplay.domain import CookieType
 from autoplay.orchestrator import Observation
 
 
@@ -123,7 +124,9 @@ class BsnesNativeDetector:
                     raise ValueError(f"Hueco inesperado en tablero rectangular ({row}, {col})")
                 board[row, col] = self._classify(image, x, y)
 
-        confidence = min(1.0, min(scores) / self.MIN_COOKIE_PIXELS)
+        confidence = 0.0 if np.any(board == CookieType.UNKNOWN) else min(
+            1.0, min(scores) / self.MIN_COOKIE_PIXELS
+        )
         return Observation(board, confidence)
 
     def _extent(self, image: np.ndarray, horizontal: bool) -> int:
@@ -148,14 +151,15 @@ class BsnesNativeDetector:
     def _classify(image: np.ndarray, x: int, y: int) -> int:
         blue, green, red = (int(value) for value in image[y, x])
         if green > 220 and red < 80:
-            return 1  # diamante verde
+            return CookieType.DIAMOND
         if red > 140 and green < 30:
-            return 2  # corazón
+            return CookieType.HEART
         if red > 220 and 30 <= green < 130:
-            return 3  # flor/círculo naranja
+            return CookieType.FLOWER
         if red > 180 and green > 180 and blue < 80:
-            return 4  # check amarillo
-        return 5      # Yoshi/comodín o tipo aún no visto
+            return CookieType.CHECKER
+        # Nunca adivinar Yoshi: un tipo desconocido debe impedir la ejecución.
+        return CookieType.UNKNOWN
 
 
 @dataclass
@@ -194,7 +198,9 @@ class BsnesController:
     def execute(self, move, cursor, board_shape=None):
         return self.input.execute(move, cursor, board_shape)
 
-    def prepare(self, launch_delay: float = 20.0, startup_starts: int = 2) -> None:
+    def prepare(self, launch_delay: float = 20.0, select_stage_delay: float = 8.0,
+                level_start_delay: float = 10.0,
+                gameplay_start_delay: float = 10.0) -> None:
         deadline = time.monotonic() + max(0.0, launch_delay)
         while True:
             remaining = max(0, ceil(deadline - time.monotonic()))
@@ -205,7 +211,15 @@ class BsnesController:
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         print(flush=True)
         self.tap("fullscreen")
-        time.sleep(0.5)
-        for _ in range(startup_starts):
-            self.tap("start")
-            time.sleep(1.0)
+        print(f"[INFO] esperando {select_stage_delay:g}s hasta Select Stage", flush=True)
+        time.sleep(max(0.0, select_stage_delay))
+        print("[INFO] Select Stage: enviando Keypad8", flush=True)
+        self.tap("start")
+        print(f"[INFO] esperando {level_start_delay:g}s hasta Start Level", flush=True)
+        time.sleep(max(0.0, level_start_delay))
+        print("[INFO] Start Level: enviando Keypad8", flush=True)
+        self.tap("start")
+        print(f"[INFO] esperando {gameplay_start_delay:g}s hasta PUSH START", flush=True)
+        time.sleep(max(0.0, gameplay_start_delay))
+        print("[INFO] PUSH START: enviando Keypad8", flush=True)
+        self.tap("start")

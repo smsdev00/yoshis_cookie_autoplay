@@ -21,7 +21,7 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(len(list(legal_moves(np.ones((4, 5))))), 18)
 
     def test_yoshi_is_wildcard_in_complete_line(self):
-        rows, cols = completed_lines(np.array([[2, 5, 2], [1, 3, 4], [3, 4, 1]]))
+        rows, cols = completed_lines(np.array([[2, 6, 2], [1, 3, 4], [3, 4, 1]]))
         self.assertEqual(rows, (0,))
         self.assertEqual(cols, ())
 
@@ -30,6 +30,15 @@ class DomainTests(unittest.TestCase):
         move = Solver().best_move(board)
         shifted = apply_move(board, move)
         self.assertTrue(any(completed_lines(shifted)))
+
+    def test_unknown_cookie_never_completes_a_line(self):
+        rows, cols = completed_lines(np.array([[2, 0, 2], [1, 3, 4], [3, 4, 1]]))
+        self.assertEqual(rows, ())
+        self.assertEqual(cols, ())
+
+    def test_solver_rejects_unknown_cookie(self):
+        with self.assertRaisesRegex(ValueError, "cookies desconocidas"):
+            Solver().best_move(np.array([[1, 0], [2, 1]]))
 
 
 if __name__ == "__main__":

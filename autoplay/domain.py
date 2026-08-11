@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Iterable, Tuple
 
 import numpy as np
@@ -14,6 +14,16 @@ class Direction(str, Enum):
     RIGHT = "right"
     UP = "up"
     DOWN = "down"
+
+
+class CookieType(IntEnum):
+    UNKNOWN = 0
+    DIAMOND = 1
+    HEART = 2
+    FLOWER = 3
+    CHECKER = 4
+    CIRCLE = 5
+    YOSHI = 6
 
 
 @dataclass(frozen=True)
@@ -34,8 +44,8 @@ def validate_board(board: np.ndarray) -> np.ndarray:
     result = np.asarray(board, dtype=np.int8)
     if result.ndim != 2 or not result.size:
         raise ValueError("El tablero debe ser una matriz 2D no vacía")
-    if np.any(result < 0):
-        raise ValueError("El tablero no admite valores negativos")
+    if np.any((result < CookieType.UNKNOWN) | (result > CookieType.YOSHI)):
+        raise ValueError("El tablero contiene un tipo de cookie inválido")
     return result
 
 
@@ -67,11 +77,11 @@ def legal_moves(board: np.ndarray) -> Iterable[Move]:
 
 
 def completed_lines(board: np.ndarray) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
-    """Devuelve filas y columnas completas, considerando 5 (Yoshi) comodín."""
+    """Devuelve líneas completas; 6 es Yoshi y 0 nunca forma coincidencias."""
     grid = validate_board(board)
 
     def is_match(line: np.ndarray) -> bool:
-        values = line[(line != 0) & (line != 5)]
+        values = line[(line != CookieType.UNKNOWN) & (line != CookieType.YOSHI)]
         return bool(np.all(line != 0) and (not values.size or np.all(values == values[0])))
 
     matched_rows = tuple(i for i, row in enumerate(grid) if is_match(row))
