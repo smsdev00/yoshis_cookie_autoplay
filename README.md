@@ -178,3 +178,36 @@ autoplay/solver.py        ranking de movimientos
 autoplay/orchestrator.py  estabilidad, ejecución y verificación
 autoplay/adapters.py      entrada ydotool y captura Wayland histórica
 ```
+
+## bsnes invisible con Docker Compose (etapa 1)
+
+La primera etapa del entorno aislado compila la versión fijada de bsnes y la
+ejecuta dentro de una pantalla X11 virtual (`Xvfb`). No abre una ventana en el
+escritorio y fuerza backends de audio nulos. La ROM nunca entra en la imagen ni
+en Git: Compose la monta como un único archivo de sólo lectura.
+
+Requisitos: Docker Engine con el plugin Compose y una copia local legal de la
+ROM en formato ZIP. Crea la configuración local y edita `ROM_PATH` con una ruta
+absoluta:
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose logs -f bsnes
+```
+
+Detén el servicio sin borrar configuración ni capturas con:
+
+```bash
+docker compose stop
+```
+
+`BSNES_REF` fija el tag o commit que se compila. El valor predeterminado es el
+commit `7d5aa1e656b9171524d01b1b22917197d8121cb4`, elegido porque usa GTK3 y se
+compila en la CI oficial sobre Ubuntu actual. Los datos de configuración quedan
+en el volumen `bsnes-config`, las
+capturas de bsnes en `screenshots` y los diagnósticos del proyecto en
+`./runtime`. El servicio de esta etapa sólo arranca el emulador: integrar el bot,
+la entrada virtual y la base de tableros corresponde a las etapas siguientes.

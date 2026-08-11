@@ -1,0 +1,29 @@
+services:
+  bsnes:
+    build:
+      context: .
+      args:
+        BSNES_REF: ${BSNES_REF:-7d5aa1e656b9171524d01b1b22917197d8121cb4}
+    image: yoshis-cookie-bsnes:${BSNES_REF:-7d5aa1e656b9171524d01b1b22917197d8121cb4}
+    environment:
+      XVFB_SCREEN: ${XVFB_SCREEN:-1280x960x24}
+    volumes:
+      - type: bind
+        source: ${ROM_PATH:?Define ROM_PATH in .env}
+        target: /rom/game.zip
+        read_only: true
+      - bsnes-config:/data
+      - screenshots:/rom
+      - ./runtime:/runtime
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -x bsnes >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+volumes:
+  bsnes-config:
+  screenshots:
