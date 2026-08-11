@@ -163,20 +163,28 @@ El modo bsnes ahora usa `PersistentUInputBackend`, basado en `python-evdev`:
 - mantiene ydotool sólo para el pipeline histórico.
 
 `evdev 1.9.3` está instalado en `venv` y forma parte de `requirements.txt`. Las
-19 pruebas automatizadas pasan.
+30 pruebas automatizadas pasan.
 
 La validación física confirmó que el mismo dispositivo persistente envía F11,
 Start y F12 de forma repetida a bsnes: se generaron los BMP `004` a `047`. Tras
 la espera visible de arranque, fullscreen y el primer Start funcionaron y se
 llegó al menú `ACTION / PUSH START`. `observe --launch` ya tolera frames de
-menú/transición. La temporización de la segunda pulsación Start sigue pendiente
-como parte de la secuencia de inicio, no del backend de entrada.
+menú/transición.
+
+La secuencia de inicio validada usa tres Keypad8 temporizados. El detector ahora
+localiza la mira, clasifica la cookie visible bajo ella y conserva el cursor
+durante su parpadeo. La navegación es cerrada: después de cada dirección se
+captura nuevamente hasta confirmar la celda objetivo.
+
+Se validó un `single-step` completo y un loop limitado a cinco movimientos. Los
+cinco fueron verificados y el bot atravesó automáticamente dos pantallas
+`STAGE START`, enviando un solo Keypad8 en cada transición.
 
 ## Próximo paso recomendado
 
 Continuar con la clasificación inequívoca de los cinco tipos normales y la
-cookie Yoshi. Después habrá que calibrar la secuencia de Start para que
-`observe --launch` llegue automáticamente a un tablero jugable.
+cookie Yoshi. Después hay que validar Game Over y una ejecución limitada más
+larga antes de habilitar el loop infinito.
 
 Preparación temporal de `/dev/uinput` usada durante la depuración:
 
@@ -188,34 +196,34 @@ pkexec /usr/bin/setfacl -m u:sms:rw /dev/uinput
 Para uso permanente debe crearse una regla udev limitada o añadir el usuario al
 grupo apropiado; no debe configurarse `/dev/uinput` como escritura global.
 
-## Secuencia de validación pendiente
+## Secuencia de validación
 
-No saltar directamente al loop infinito:
+Completado:
 
-1. Lanzar bsnes manualmente y cargar la ROM.
-2. Crear el dispositivo uinput persistente.
-3. Enviar sólo F12 y comprobar que aparece `-004.bmp` o superior.
-4. Ejecutar `observe`: dos capturas, ningún movimiento.
-5. Confirmar que el tablero detectado coincide visualmente.
-6. Colocar/calibrar el cursor inicial.
-7. Ejecutar `single-step` una sola vez.
-8. Comparar array esperado y observado.
-9. Corregir seguimiento del cursor si una limpieza cambia dimensiones.
-10. Ejecutar un loop limitado a 5 movimientos.
-11. Probar recuperación de Game Over y menús.
-12. Sólo entonces ejecutar `./run-bsnes-kiosk.sh` sin límite.
+1. Lanzamiento de bsnes y carga de ROM.
+2. Dispositivo uinput persistente.
+3. F12 repetido y BMP completo.
+4. `observe` sin movimientos.
+5. Detección visual del cursor y cookie ocluida.
+6. `single-step` con array esperado/observado idéntico.
+7. Loop limitado a cinco movimientos.
+8. Transición automática entre stages mediante `STAGE START`.
+
+Pendiente:
+
+1. Validar todos los tipos normales y Yoshi.
+2. Probar Game Over/título sin recuperación ciega.
+3. Ejecutar una prueba limitada más larga.
+4. Sólo entonces ejecutar `./run-bsnes-kiosk.sh` sin límite.
 
 ## Riesgos y trabajo todavía pendiente
 
-- Detectar visualmente la posición inicial del cursor o confirmar con certeza
-  dónde comienza cada etapa. Ahora se supone `(0,0)`.
 - Ajustar el cursor cuando desaparece la fila/columna donde se encontraba.
-- Confirmar la cantidad exacta de pulsaciones Start para título → menú → juego.
 - Validar los cinco tipos normales y la cookie Yoshi. Las muestras actuales
   sólo contienen cuatro apariencias claramente observadas.
 - Mejorar el solver con simulación posterior a la eliminación y lookahead.
-- Diferenciar de forma visual Game Over, título, pausa y transición de stage;
-  actualmente la recuperación se basa en fallos consecutivos.
+- Diferenciar visualmente Game Over, título y pausa. La transición normal de
+  stage ya se reconoce; la recuperación restante se basa en fallos consecutivos.
 - Evitar que `Downloads` acumule BMP indefinidamente, preferiblemente cambiando
   Screenshots en bsnes a una carpeta exclusiva; el bot no debe borrar archivos
   generales automáticamente.

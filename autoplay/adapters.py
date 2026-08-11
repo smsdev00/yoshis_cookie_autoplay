@@ -36,15 +36,25 @@ class InputBackend(Protocol):
                 board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
         ...
 
+    def move_cursor(self, cursor: Tuple[int, int],
+                    target: Tuple[int, int]) -> Tuple[int, int]:
+        ...
+
+    def step_cursor(self, direction: str) -> None:
+        ...
+
 
 class PersistentUInputBackend:
     """Teclado evdev persistente para que Wayland registre el dispositivo."""
 
     def __init__(self, keycodes: Mapping[str, int], registration_delay: float = 1.0,
-                 key_delay: float = 0.03, device_name: str = "Yoshi Cookie AutoPlayer",
-                 uinput=None):
+                 key_delay: float = 0.03, navigation_hold: float = 0.08,
+                 navigation_delay: float = 0.2,
+                 device_name: str = "Yoshi Cookie AutoPlayer", uinput=None):
         self.keycodes = dict(keycodes)
         self.key_delay = key_delay
+        self.navigation_hold = navigation_hold
+        self.navigation_delay = navigation_delay
         self._closed = False
         try:
             from evdev import UInput, ecodes
@@ -89,7 +99,7 @@ class PersistentUInputBackend:
 
     def execute(self, move: Move, cursor: Tuple[int, int],
                 board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
-        row, col = _move_cursor_to(self, cursor, (move.row, move.col))
+        row, col = self.move_cursor(cursor, (move.row, move.col))
         try:
             a = self.keycodes["a"]
             direction = self.keycodes[move.direction.value]
@@ -102,6 +112,23 @@ class PersistentUInputBackend:
         finally:
             self._emit(a, 0)
         return _shifted_cursor((row, col), move, board_shape)
+
+    def move_cursor(self, cursor: Tuple[int, int],
+                    target: Tuple[int, int]) -> Tuple[int, int]:
+        return _move_cursor_to(self, cursor, target, self.navigation_delay)
+
+    def tap_navigation(self, button: str) -> None:
+        try:
+            code = self.keycodes[button]
+        except KeyError as exc:
+            raise InputError(f"Botón sin mapear: {button}") from exc
+        self._emit(code, 1)
+        if self.navigation_hold > 0:
+            time.sleep(self.navigation_hold)
+        self._emit(code, 0)
+
+    def step_cursor(self, direction: str) -> None:
+        self.tap_navigation(direction)
 
     def close(self) -> None:
         if not self._closed:
@@ -177,18 +204,19 @@ class WaylandFrameSource:
         return full[y:y + height, x:x + width].copy()
 
 
-def _move_cursor_to(backend, cursor: Tuple[int, int],
-                    target: Tuple[int, int]) -> Tuple[int, int]:
+def _move_cursor_to(backend, cursor: Tuple[int, int], target: Tuple[int, int],
+                    navigation_delay: float = 0.0) -> Tuple[int, int]:
     row, col = cursor
     target_row, target_col = target
+    tap = getattr(backend, "tap_navigation", backend.tap)
     while row < target_row:
-        backend.tap("down"); row += 1
+        tap("down"); row += 1; time.sleep(navigation_delay)
     while row > target_row:
-        backend.tap("up"); row -= 1
+        tap("up"); row -= 1; time.sleep(navigation_delay)
     while col < target_col:
-        backend.tap("right"); col += 1
+        tap("right"); col += 1; time.sleep(navigation_delay)
     while col > target_col:
-        backend.tap("left"); col -= 1
+        tap("left"); col -= 1; time.sleep(navigation_delay)
     return row, col
 
 
@@ -230,7 +258,7 @@ class YdotoolInputBackend:
 
     def execute(self, move: Move, cursor: Tuple[int, int],
                 board_shape: Optional[Tuple[int, int]] = None) -> Tuple[int, int]:
-        row, col = _move_cursor_to(self, cursor, (move.row, move.col))
+        row, col = self.move_cursor(cursor, (move.row, move.col))
 
         # El manual: mantener A y pulsar dirección. Un solo comando conserva
         # el orden press(A), tap(dirección), release(A).
@@ -244,3 +272,10 @@ class YdotoolInputBackend:
             raise InputError(proc.stderr.strip() or "ydotool falló ejecutando el movimiento")
         # El juego desplaza también la cookie seleccionada y el cursor.
         return _shifted_cursor((row, col), move, board_shape)
+
+    def move_cursor(self, cursor: Tuple[int, int],
+                    target: Tuple[int, int]) -> Tuple[int, int]:
+        return _move_cursor_to(self, cursor, target)
+
+    def step_cursor(self, direction: str) -> None:
+        self.tap(direction)

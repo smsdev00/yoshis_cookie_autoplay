@@ -39,6 +39,12 @@ class BsnesScreenshotError(RuntimeError):
     pass
 
 
+class BsnesScreenStateError(ValueError):
+    def __init__(self, state: str):
+        self.state = state
+        super().__init__(f"Pantalla de bsnes detectada: {state}")
+
+
 class BsnesScreenshotSource:
     """Pide un screenshot con F12 y espera el BMP nuevo y completo."""
 
@@ -106,6 +112,8 @@ class BsnesNativeDetector:
         if image is None or image.shape[:2] != (self.HEIGHT, self.WIDTH):
             shape = None if image is None else image.shape[:2]
             raise ValueError(f"Se esperaba framebuffer 256x224; recibido {shape}")
+        if self._is_stage_start(image):
+            raise BsnesScreenStateError("stage_start")
 
         width = self._extent(image, horizontal=True)
         height = self._extent(image, horizontal=False)
@@ -114,6 +122,7 @@ class BsnesNativeDetector:
 
         board = np.zeros((height, width), dtype=np.int8)
         scores = []
+        cursor = None
         top = self.BOTTOM - (height - 1) * self.CELL
         for row in range(height):
             for col in range(width):
@@ -122,12 +131,32 @@ class BsnesNativeDetector:
                 scores.append(score)
                 if score < self.MIN_COOKIE_PIXELS:
                     raise ValueError(f"Hueco inesperado en tablero rectangular ({row}, {col})")
-                board[row, col] = self._classify(image, x, y)
+                if self._has_cursor(image, x, y):
+                    if cursor is not None:
+                        raise ValueError("Se detectó más de un cursor en el tablero")
+                    cursor = (row, col)
+                    board[row, col] = self._classify_occluded(image, x, y)
+                else:
+                    board[row, col] = self._classify(image, x, y)
 
         confidence = 0.0 if np.any(board == CookieType.UNKNOWN) else min(
             1.0, min(scores) / self.MIN_COOKIE_PIXELS
         )
-        return Observation(board, confidence)
+        return Observation(board, confidence, cursor)
+
+    @staticmethod
+    def _is_stage_start(image: np.ndarray) -> bool:
+        """Reconoce el panel fijo STAGE START / PUSH START del framebuffer."""
+        samples = (
+            ((96, 96), (90, 255, 255)),
+            ((96, 112), (16, 33, 24)),
+            ((96, 128), (156, 156, 0)),
+            ((128, 160), (0, 247, 8)),
+        )
+        return all(
+            np.max(np.abs(image[y, x].astype(np.int16) - np.asarray(color))) <= 4
+            for (x, y), color in samples
+        )
 
     def _extent(self, image: np.ndarray, horizontal: bool) -> int:
         total = 0
@@ -160,6 +189,27 @@ class BsnesNativeDetector:
             return CookieType.CHECKER
         # Nunca adivinar Yoshi: un tipo desconocido debe impedir la ejecución.
         return CookieType.UNKNOWN
+
+    @staticmethod
+    def _has_cursor(image: np.ndarray, x: int, y: int) -> bool:
+        core = image[y - 3:y + 4, x - 3:x + 4]
+        white = np.all(core > 240, axis=2)
+        return int(np.count_nonzero(white)) >= 4
+
+    @staticmethod
+    def _classify_occluded(image: np.ndarray, x: int, y: int) -> int:
+        """Clasifica el símbolo que sobrevive alrededor de la mira del cursor."""
+        patch = image[y - 7:y + 8, x - 7:x + 8]
+        blue, green, red = cv2.split(patch)
+        counts = {
+            CookieType.DIAMOND: np.count_nonzero((green > 220) & (red < 80)),
+            CookieType.HEART: np.count_nonzero((red > 140) & (green < 30)),
+            CookieType.FLOWER: np.count_nonzero(
+                (red > 220) & (green >= 30) & (green < 130)
+            ),
+        }
+        cookie_type, pixels = max(counts.items(), key=lambda item: item[1])
+        return cookie_type if pixels >= 3 else CookieType.UNKNOWN
 
 
 @dataclass
@@ -197,6 +247,12 @@ class BsnesController:
 
     def execute(self, move, cursor, board_shape=None):
         return self.input.execute(move, cursor, board_shape)
+
+    def move_cursor(self, cursor, target):
+        return self.input.move_cursor(cursor, target)
+
+    def step_cursor(self, direction):
+        self.input.step_cursor(direction)
 
     def prepare(self, launch_delay: float = 20.0, select_stage_delay: float = 8.0,
                 level_start_delay: float = 10.0,

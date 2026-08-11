@@ -10,7 +10,8 @@ import numpy as np
 from unittest.mock import Mock, patch
 
 from autoplay.adapters import PersistentUInputBackend, YdotoolInputBackend
-from autoplay.bsnes import BSNES_KEYS, BsnesController, BsnesNativeDetector, BsnesScreenshotSource
+from autoplay.bsnes import (BSNES_KEYS, BsnesController, BsnesNativeDetector,
+                            BsnesScreenStateError, BsnesScreenshotSource)
 from autoplay.domain import Direction, Move
 
 
@@ -65,11 +66,34 @@ class BsnesDetectorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "256x224"):
             BsnesNativeDetector().detect(np.zeros((100, 100, 3), dtype=np.uint8))
 
+    def test_detects_stage_start_screen(self):
+        frame = np.zeros((224, 256, 3), dtype=np.uint8)
+        for (x, y), color in (
+            ((96, 96), (90, 255, 255)), ((96, 112), (16, 33, 24)),
+            ((96, 128), (156, 156, 0)), ((128, 160), (0, 247, 8)),
+        ):
+            frame[y, x] = color
+        with self.assertRaises(BsnesScreenStateError) as raised:
+            BsnesNativeDetector().detect(frame)
+        self.assertEqual(raised.exception.state, "stage_start")
+
     def test_unknown_cookie_is_not_treated_as_yoshi(self):
         unknown = np.full((2, 2), 5, dtype=np.int8)
         observation = BsnesNativeDetector().detect(cookie_frame(unknown))
         np.testing.assert_array_equal(observation.board, np.zeros((2, 2), dtype=np.int8))
         self.assertEqual(observation.confidence, 0.0)
+
+    def test_detects_cursor_and_classifies_visible_symbol_around_it(self):
+        expected = np.full((2, 2), 3, dtype=np.int8)
+        frame = cookie_frame(expected)
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT + detector.CELL, detector.BOTTOM - detector.CELL
+        frame[y - 3:y + 4, x - 3:x + 4] = (255, 255, 255)
+        for dx, dy in ((-5, 0), (5, 0), (0, -5), (0, 5)):
+            frame[y + dy, x + dx] = (0, 66, 255)
+        observation = detector.detect(frame)
+        self.assertEqual(observation.cursor, (0, 1))
+        self.assertEqual(observation.board[0, 1], 3)
 
     def test_screenshot_source_waits_for_new_complete_bmp(self):
         with TemporaryDirectory() as directory:
@@ -108,7 +132,8 @@ class PersistentUInputTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         backend = PersistentUInputBackend(
-            BSNES_KEYS, registration_delay=0, key_delay=0, uinput=device
+            BSNES_KEYS, registration_delay=0, key_delay=0,
+            navigation_hold=0, navigation_delay=0, uinput=device
         )
         return backend, device
 
@@ -130,6 +155,17 @@ class PersistentUInputTests(unittest.TestCase):
         device.close.assert_called_once_with()
         with self.assertRaisesRegex(Exception, "cerrado"):
             backend.tap("screenshot")
+
+    def test_cursor_navigation_holds_each_direction(self):
+        backend, device = self._backend()
+        cursor = backend.move_cursor((1, 2), (0, 0))
+        self.assertEqual(cursor, (0, 0))
+        self.assertEqual(
+            [call.args[1:] for call in device.write.call_args_list],
+            [(BSNES_KEYS["up"], 1), (BSNES_KEYS["up"], 0),
+             (BSNES_KEYS["left"], 1), (BSNES_KEYS["left"], 0),
+             (BSNES_KEYS["left"], 1), (BSNES_KEYS["left"], 0)],
+        )
 
 
 if __name__ == "__main__":

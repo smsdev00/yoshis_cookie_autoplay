@@ -124,11 +124,12 @@ entran por la derecha; sólo toma el rectángulo compacto inferior izquierdo.
 
 ## Limitaciones actuales
 
-- El estado inicial del cursor se supone `(0,0)`. Para `single-step`, coloca el
-  cursor en la esquina superior izquierda antes de empezar. El cursor se sigue
-  correctamente después de cada desplazamiento.
-- La recuperación automática de menús usa pulsaciones Start configurables; se
-  debe validar visualmente antes de dejarlo desatendido.
+- El cursor se detecta visualmente incluso durante su parpadeo. La navegación se
+  hace una tecla por vez y cada nueva posición se confirma con una captura antes
+  de ejecutar `A+dirección`.
+- La pantalla `STAGE START / PUSH START` se reconoce y continúa con un Keypad8.
+  La recuperación genérica de título/Game Over aún debe validarse antes de dejar
+  el kiosco desatendido.
 - No es un bloqueo de pantalla de KDE: es un modo kiosco a pantalla completa.
 
 ## Detector histórico de capturas de escritorio

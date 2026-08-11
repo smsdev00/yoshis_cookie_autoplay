@@ -20,6 +20,7 @@ from autoplay.bsnes import (
     BsnesController,
     BsnesNativeDetector,
     BsnesProcess,
+    BsnesScreenStateError,
     BsnesScreenshotSource,
 )
 from autoplay.orchestrator import AutoPlayLoop, CycleConfig
@@ -54,7 +55,7 @@ class KioskRunner:
             except (TimeoutError, RuntimeError, ValueError) as exc:
                 failures += 1
                 print(f"[WARN] observación #{failures} falló: {exc}", flush=True)
-                if failures >= self.recovery_failures:
+                if failures >= self.recovery_failures and self.running:
                     self._recover()
                     failures = 0
                 else:
@@ -71,7 +72,9 @@ class KioskRunner:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Yoshi's Cookie como kiosco con bsnes")
-    parser.add_argument("mode", choices=("inspect", "observe", "single-step", "kiosk"))
+    parser.add_argument(
+        "mode", choices=("inspect", "observe", "cursor-check", "single-step", "kiosk")
+    )
     parser.add_argument("--bsnes", type=Path, default=DEFAULT_BSNES)
     parser.add_argument("--rom", type=Path, default=DEFAULT_ROM)
     parser.add_argument("--screenshots", type=Path, default=DEFAULT_SCREENSHOT_DIR)
@@ -136,15 +139,38 @@ def main(argv=None) -> int:
             animation_delay=args.animation_delay,
             stability_timeout=args.timeout,
             min_confidence=0.98,
+            require_cursor=True,
         )
-        loop = AutoPlayLoop(
-            lambda: detector.detect(source.capture()), executor=controller, config=config
-        )
+        last_stage_start = 0.0
+
+        def observe_board():
+            nonlocal last_stage_start
+            try:
+                return detector.detect(source.capture())
+            except BsnesScreenStateError as exc:
+                now = time.monotonic()
+                if (args.mode == "kiosk" and exc.state == "stage_start" and
+                        now - last_stage_start >= 5.0):
+                    print("[INFO] Stage Start detectado; enviando Keypad8", flush=True)
+                    controller.tap("start")
+                    last_stage_start = now
+                    time.sleep(3.0)
+                raise
+
+        loop = AutoPlayLoop(observe_board, executor=controller, config=config)
 
         if args.mode == "observe":
             observation, move = loop.propose()
             print(f"tablero={observation.board.tolist()}")
             print(f"propuesta={move.direction.value} índice={move.axis_index} score={move.score:.0f}")
+            return 0
+        if args.mode == "cursor-check":
+            before = loop.wait_for_stable_board()
+            target = (0, 0)
+            loop.cursor = before.cursor
+            loop.position_cursor(target, before.board.shape)
+            print(f"cursor_antes={before.cursor}")
+            print(f"cursor_después={loop.cursor}")
             return 0
         if args.mode == "single-step":
             before, move, after = loop.step(execute=True)
