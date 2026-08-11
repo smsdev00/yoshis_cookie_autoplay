@@ -13,7 +13,7 @@ if command -v systemd-inhibit >/dev/null 2>&1; then
         --what=idle:sleep \
         --who="Yoshi's Cookie AutoPlayer" \
         --why="bsnes kiosk activo" \
-        venv/bin/python -m autoplay.kiosk kiosk --launch --yes-really-execute "$@"
+        venv/bin/python -m autoplay.kiosk kiosk --launch --hud --yes-really-execute "$@"
 fi
 
-exec venv/bin/python -m autoplay.kiosk kiosk --launch --yes-really-execute "$@"
+exec venv/bin/python -m autoplay.kiosk kiosk --launch --hud --yes-really-execute "$@"

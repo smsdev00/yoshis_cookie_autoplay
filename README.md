@@ -92,6 +92,24 @@ El lanzador equivalente intenta además inhibir suspensión/idle mediante
 ./run-bsnes-kiosk.sh
 ```
 
+El script activa el HUD apenas lanza el kiosco, antes de recorrer los menús e
+iniciar la partida, para que esté visible desde el comienzo de la grabación.
+Se dibuja sobre las franjas negras laterales y muestra estado del loop, stage
+estimado a partir de las transiciones confirmadas, movimiento actual, array del
+tablero y score táctico del solver. La derecha conserva el progreso histórico y
+los últimos errores registrados. Al entrar bsnes en fullscreen, el HUD se
+recrea por encima de la ventana del juego para que el compositor no lo oculte.
+
+Las estadísticas se guardan atómicamente en `runtime/stats.json`. Incluyen
+sesiones, movimientos totales, máximo stage, corrida más larga, errores y máximo
+score táctico. Este último pertenece al solver: no es el score numérico mostrado
+por el juego. Para ejecutar sin interfaz lateral, usa directamente el módulo sin
+`--hud`:
+
+```bash
+venv/bin/python -m autoplay.kiosk kiosk --launch --yes-really-execute
+```
+
 Para una prueba limitada:
 
 ```bash

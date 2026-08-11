@@ -7,7 +7,7 @@ import time
 from math import ceil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import cv2
 import numpy as np
@@ -300,7 +300,8 @@ class BsnesController:
 
     def prepare(self, launch_delay: float = 20.0, select_stage_delay: float = 8.0,
                 level_start_delay: float = 10.0,
-                gameplay_start_delay: float = 10.0) -> None:
+                gameplay_start_delay: float = 10.0,
+                after_fullscreen: Optional[Callable[[], None]] = None) -> None:
         deadline = time.monotonic() + max(0.0, launch_delay)
         while True:
             remaining = max(0, ceil(deadline - time.monotonic()))
@@ -311,6 +312,8 @@ class BsnesController:
             time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         print(flush=True)
         self.tap("fullscreen")
+        if after_fullscreen:
+            after_fullscreen()
         print(f"[INFO] esperando {select_stage_delay:g}s hasta Select Stage", flush=True)
         time.sleep(max(0.0, select_stage_delay))
         print("[INFO] Select Stage: enviando Keypad8", flush=True)

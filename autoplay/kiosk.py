@@ -26,6 +26,7 @@ from autoplay.bsnes import (
     BsnesUnknownCookieError,
 )
 from autoplay.domain import CookieType
+from autoplay.hud import HudDisplay, KioskTelemetry
 from autoplay.orchestrator import AutoPlayLoop, CycleConfig, PostMoveVerificationError
 from autoplay.solver import Solver
 
@@ -33,12 +34,14 @@ from autoplay.solver import Solver
 class KioskRunner:
     def __init__(self, loop: AutoPlayLoop, controller: BsnesController,
                  stop_file: Path, recovery_failures: int = 5,
-                 recovery_starts: int = 2):
+                 recovery_starts: int = 2,
+                 telemetry: KioskTelemetry | None = None):
         self.loop = loop
         self.controller = controller
         self.stop_file = stop_file
         self.recovery_failures = recovery_failures
         self.recovery_starts = recovery_starts
+        self.telemetry = telemetry
         self.running = True
 
     def stop(self, *_args) -> None:
@@ -55,16 +58,24 @@ class KioskRunner:
                 failures = 0
                 print(f"#{moves} {before.board.shape} {move.direction.value} "
                       f"índice={move.axis_index} score={move.score:.0f}", flush=True)
+                if self.telemetry:
+                    self.telemetry.move(moves, before.board, move)
             except BsnesUnknownCookieError as exc:
                 print(f"[ERROR] {exc}; kiosco detenido sin mover", flush=True)
                 self.running = False
+                if self.telemetry:
+                    self.telemetry.error(str(exc))
             except PostMoveVerificationError as exc:
                 print(f"[ERROR] {exc}; kiosco detenido para evitar desincronización",
                       flush=True)
                 self.running = False
+                if self.telemetry:
+                    self.telemetry.error(str(exc))
             except (TimeoutError, RuntimeError, ValueError) as exc:
                 failures += 1
                 print(f"[WARN] observación #{failures} falló: {exc}", flush=True)
+                if self.telemetry:
+                    self.telemetry.set_state(f"RETRY {failures:02d}")
                 if failures >= self.recovery_failures and self.running:
                     self._recover()
                     failures = 0
@@ -106,6 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--animation-delay", type=float, default=0.8)
     parser.add_argument("--timeout", type=float, default=3.0)
     parser.add_argument("--yes-really-execute", action="store_true")
+    parser.add_argument("--hud", action="store_true",
+                        help="Mostrar HUD Matrix en las bandas laterales")
+    parser.add_argument("--stats-file", type=Path, default=Path("runtime/stats.json"),
+                        help="Histórico JSON del kiosco")
     return parser
 
 
@@ -132,14 +147,28 @@ def main(argv=None) -> int:
     input_backend = PersistentUInputBackend(BSNES_KEYS)
     controller = BsnesController(input_backend)
     process = BsnesProcess(args.bsnes, args.rom)
+    telemetry = None
     try:
+        if args.mode == "kiosk":
+            args.stop_file.parent.mkdir(parents=True, exist_ok=True)
+            display = HudDisplay() if args.hud else None
+            telemetry = KioskTelemetry(args.stats_file, display)
+            telemetry.start()
+            if display and display.error:
+                print(f"[WARN] HUD no disponible: {display.error}", flush=True)
+
         if args.launch:
             process.launch()
+            if telemetry:
+                telemetry.set_state("GAME BOOTING")
             controller.prepare(
                 launch_delay=args.launch_delay,
                 select_stage_delay=args.select_stage_delay,
                 level_start_delay=args.level_start_delay,
                 gameplay_start_delay=args.gameplay_start_delay,
+                after_fullscreen=(
+                    telemetry.restore_after_fullscreen if telemetry else None
+                ),
             )
 
         source = BsnesScreenshotSource(controller, args.screenshots, args.pattern)
@@ -164,6 +193,8 @@ def main(argv=None) -> int:
                     print("[INFO] Stage Start detectado; enviando Keypad8", flush=True)
                     controller.tap("start")
                     stage_start_handled = True
+                    if telemetry:
+                        telemetry.stage_start()
                     time.sleep(3.0)
                 raise
             stage_start_handled = False
@@ -176,6 +207,8 @@ def main(argv=None) -> int:
                 if not cv2.imwrite(str(diagnostic), image):
                     raise RuntimeError(f"No se pudo guardar diagnóstico: {diagnostic}")
                 raise BsnesUnknownCookieError(positions, diagnostic)
+            if telemetry:
+                telemetry.set_state("BOARD LOCKED", observation.board)
             return observation
 
         loop = AutoPlayLoop(observe_board, executor=controller, config=config)
@@ -200,13 +233,14 @@ def main(argv=None) -> int:
             print(f"después={after.board.tolist() if after else None}")
             return 0
 
-        args.stop_file.parent.mkdir(parents=True, exist_ok=True)
-        runner = KioskRunner(loop, controller, args.stop_file)
+        runner = KioskRunner(loop, controller, args.stop_file, telemetry=telemetry)
         signal.signal(signal.SIGINT, runner.stop)
         signal.signal(signal.SIGTERM, runner.stop)
         print(f"[INFO] kiosco activo; detén con Ctrl+C o creando {args.stop_file}", flush=True)
         runner.run(args.max_moves)
     finally:
+        if telemetry:
+            telemetry.close()
         if args.launch and process.running():
             process.process.terminate()
             try:
