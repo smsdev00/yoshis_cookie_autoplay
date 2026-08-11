@@ -16,6 +16,16 @@ class PostMoveVerificationError(RuntimeError):
     """El juego recibió un movimiento pero su resultado no pudo validarse."""
 
 
+def matches_expected_with_growth(expected: np.ndarray, observed: np.ndarray) -> bool:
+    """Tolera sólo filas nuevas arriba y columnas nuevas a la derecha."""
+    expected_rows, expected_cols = expected.shape
+    observed_rows, observed_cols = observed.shape
+    if observed_rows < expected_rows or observed_cols < expected_cols:
+        return False
+    retained = observed[observed_rows - expected_rows:, :expected_cols]
+    return bool(np.array_equal(expected, retained))
+
+
 @dataclass
 class CycleConfig:
     poll_interval: float = 0.25
@@ -110,11 +120,13 @@ class AutoPlayLoop:
             raise PostMoveVerificationError(
                 f"No se pudo observar el resultado del movimiento: {exc}"
             ) from exc
-        # La limpieza/entrada de cookies puede cambiar dimensiones o contenido.
-        # Si no hubo línea inmediata, el desplazamiento sí debe coincidir exacto.
-        if not clears_line and not np.array_equal(expected, after.board):
+        # Sin limpieza, el resultado debe conservarse intacto abajo a la izquierda;
+        # el juego puede sumar simultáneamente filas arriba o columnas a la derecha.
+        if not clears_line and not matches_expected_with_growth(expected, after.board):
             raise PostMoveVerificationError(
-                "La verificación falló: el tablero observado no coincide con el movimiento"
+                f"La verificación falló para {move.direction.value} "
+                f"índice={move.axis_index}: esperado={expected.tolist()} "
+                f"observado={after.board.tolist()}"
             )
         return before, move, after
 

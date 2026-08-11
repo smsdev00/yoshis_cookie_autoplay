@@ -163,7 +163,7 @@ El modo bsnes ahora usa `PersistentUInputBackend`, basado en `python-evdev`:
 - mantiene ydotool sólo para el pipeline histórico.
 
 `evdev 1.9.3` está instalado en `venv` y forma parte de `requirements.txt`. Las
-37 pruebas automatizadas pasan.
+40 pruebas automatizadas pasan.
 
 La validación física confirmó que el mismo dispositivo persistente envía F11,
 Start y F12 de forma repetida a bsnes: se generaron los BMP `004` a `047`. Tras
@@ -185,14 +185,14 @@ encontradas. El detector distingue los cinco tipos normales, Yoshi como comodín
 las fases clara/oscura del cursor y cookies ocluidas. Ante cualquier apariencia
 desconocida guarda el framebuffer en `runtime/unknown-cookies/` y se detiene.
 Los fallos posteriores a enviar un movimiento también son fatales para evitar
-continuar desincronizado. Se alcanzaron 16 movimientos en una corrida de
-depuración, aunque esa ejecución reveló fallos intermedios y no cuenta como una
-validación limpia de 20 movimientos.
+continuar desincronizado. La aceptación final completó limpiamente 20 movimientos
+verificados, atravesó varios `STAGE START` y llegó a un tablero 5×5. Durante la
+depuración se añadieron regresiones para diamantes desplazados, tableros estrechos
+2×1/1×2 y crecimiento mediante filas nuevas arriba o columnas nuevas a la derecha.
 
 ## Próximo paso recomendado
 
-Repetir una ejecución limpia limitada a 20 movimientos y después validar Game
-Over/título antes de habilitar el loop infinito.
+Validar Game Over/título antes de habilitar el loop infinito.
 
 Preparación temporal de `/dev/uinput` usada durante la depuración:
 
@@ -216,12 +216,12 @@ Completado:
 6. `single-step` con array esperado/observado idéntico.
 7. Loop limitado a cinco movimientos.
 8. Transición automática entre stages mediante `STAGE START`.
+9. Ejecución limpia limitada a 20 movimientos con verificación posterior.
 
 Pendiente:
 
-1. Ejecutar una prueba limpia limitada a 20 movimientos.
-2. Probar Game Over/título sin recuperación ciega.
-3. Sólo entonces ejecutar `./run-bsnes-kiosk.sh` sin límite.
+1. Probar Game Over/título sin recuperación ciega.
+2. Sólo entonces ejecutar `./run-bsnes-kiosk.sh` sin límite.
 
 ## Riesgos y trabajo todavía pendiente
 

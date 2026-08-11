@@ -3,10 +3,17 @@ from unittest.mock import patch
 
 import numpy as np
 
-from autoplay.orchestrator import AutoPlayLoop, CycleConfig, Observation
+from autoplay.orchestrator import (AutoPlayLoop, CycleConfig, Observation,
+                                   matches_expected_with_growth)
 
 
 class OrchestratorTests(unittest.TestCase):
+    def test_verification_accepts_growth_only_at_top_and_right(self):
+        expected = np.array([[1, 2], [3, 4]])
+        observed = np.array([[5, 5, 5], [1, 2, 6], [3, 4, 6]])
+        self.assertTrue(matches_expected_with_growth(expected, observed))
+        self.assertFalse(matches_expected_with_growth(expected, observed[:, 1:]))
+
     @patch("autoplay.orchestrator.time.sleep", return_value=None)
     def test_requires_consecutive_equal_boards(self, _sleep):
         changing = np.array([[1, 2], [2, 1]])

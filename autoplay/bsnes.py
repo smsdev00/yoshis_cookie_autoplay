@@ -126,7 +126,7 @@ class BsnesNativeDetector:
 
         width = self._extent(image, horizontal=True)
         height = self._extent(image, horizontal=False)
-        if width < 2 or height < 2:
+        if width == 0 or height == 0 or width * height < 2:
             raise ValueError(f"Tablero no jugable o en animación: {height}x{width}")
 
         board = np.zeros((height, width), dtype=np.int8)
@@ -208,6 +208,8 @@ class BsnesNativeDetector:
             return CookieType.HEART
         if orange >= 15:
             return CookieType.FLOWER
+        if int(np.count_nonzero((green_patch > 220) & (red_patch < 80))) >= 15:
+            return CookieType.DIAMOND
         blue, green, red = (int(value) for value in image[y, x])
         if green > 220 and red < 80:
             return CookieType.DIAMOND

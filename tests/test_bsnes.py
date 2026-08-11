@@ -65,6 +65,11 @@ class BsnesDetectorTests(unittest.TestCase):
         observation = BsnesNativeDetector().detect(cookie_frame(expected))
         np.testing.assert_array_equal(observation.board, expected)
 
+    def test_native_detector_accepts_two_by_one_endgame_board(self):
+        expected = np.array([[2], [1]], dtype=np.int8)
+        observation = BsnesNativeDetector().detect(cookie_frame(expected))
+        np.testing.assert_array_equal(observation.board, expected)
+
     def test_rejects_wrong_resolution(self):
         with self.assertRaisesRegex(ValueError, "256x224"):
             BsnesNativeDetector().detect(np.zeros((100, 100, 3), dtype=np.uint8))
@@ -147,6 +152,17 @@ class BsnesDetectorTests(unittest.TestCase):
             frame[y + dy, x + dx] = (0, 66, 255)
         observation = detector.detect(frame)
         self.assertEqual(observation.board[1, 1], 3)
+
+    def test_shifted_diamond_is_classified_by_its_visible_symbol(self):
+        frame = cookie_frame(np.full((2, 2), 1, dtype=np.int8))
+        detector = BsnesNativeDetector()
+        x, y = detector.LEFT + detector.CELL, detector.BOTTOM
+        frame[y, x] = (24, 49, 107)
+        green_points = [(dx, dy) for dy in range(-5, 6) for dx in range(1, 6)][:15]
+        for dx, dy in green_points:
+            frame[y + dy, x + dx] = (8, 255, 0)
+        observation = detector.detect(frame)
+        self.assertEqual(observation.board[1, 1], 1)
 
     def test_plain_brown_cookie_is_circle(self):
         frame = cookie_frame(np.full((2, 2), 3, dtype=np.int8))
